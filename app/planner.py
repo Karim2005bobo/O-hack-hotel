@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from . import inventory as inv
 from .data.destinations import DEST_BY_ID, DESTINATIONS, MONTH_GEN, Destination
-from .data.geo import ORIGIN_BY_CODE, ORIGIN_SAME_DEST, flight_minutes, haversine_km
+from .data.geo import ORIGIN_BY_CODE, ORIGIN_SAME_DEST, flight_minutes, haversine_km, hub_point
 from .state import TripRequest, today
 
 WEIGHTS = {
@@ -109,7 +109,7 @@ def fastest_minutes(req: TripRequest, dest: Destination) -> tuple[int | None, st
         if dist >= 150:
             m = flight_minutes(dist)
             if origin.code not in dest.direct_from:
-                hub = ORIGIN_BY_CODE.get(dest.hub if dest.hub != origin.code else "MOW")
+                hub = hub_point(dest.hubs[0] if dest.hubs else dest.hub if dest.hub != origin.code else "MOW")
                 m = flight_minutes(haversine_km(origin.lat, origin.lon, hub.lat, hub.lon)) + \
                     flight_minutes(haversine_km(hub.lat, hub.lon, dest.lat, dest.lon)) + 90
             best = m
@@ -382,10 +382,11 @@ def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit:
     month = req.month or (date.fromisoformat(req.date_from).month if req.date_from else ((today().month % 12) + 1))
     prefs = set(req.prefs)
     origin = req.origin or "MOW"
-    for d in DESTINATIONS:
+    pool = [DEST_BY_ID[i] for i in req.candidates if i in DEST_BY_ID] if req.candidates else DESTINATIONS
+    for d in pool:
         if ORIGIN_SAME_DEST.get(origin) == d.id or d.id in req.avoid or d.country in req.avoid:
             continue
-        if req.country and d.country != req.country and not (req.country == "Россия" and d.domestic):
+        if req.country and not req.candidates and d.country != req.country and not (req.country == "Россия" and d.domestic):
             continue
         reason = None
         fm, mode = fastest_minutes(req, d)
@@ -639,6 +640,7 @@ def _dest_card(item: dict, req: TripRequest) -> dict:
         "risks": _uniq(item["risks"])[:3],
         "highlights": list(d.highlights[:3]),
         "kinds": list(d.kinds),
+        "ai": d.source == "llm",
     }
 
 

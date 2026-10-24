@@ -52,6 +52,8 @@ class Destination:
     flights: bool = True
     direct_from: tuple[str, ...] = ("MOW", "LED")
     hub: str = "MOW"  # пересадочный хаб для регионов
+    hubs: tuple[str, ...] = ()  # зарубежные хабы, если прямых рейсов из России нет (IST, DXB, BEG)
+    source: str = "catalog"  # catalog | llm — откуда взялись сведения о месте
     risks: dict = field(default_factory=dict)  # месяц -> текст риска
 
 
@@ -669,7 +671,30 @@ DESTINATIONS: list[Destination] = [
     ),
 ]
 
-DEST_BY_ID: dict[str, Destination] = {d.id: d for d in DESTINATIONS}
+class _DestRegistry(dict):
+    """Каталог + направления, которые агент узнал от LLM (подгружаются по id из кэша)."""
+
+    loader = None  # устанавливается модулем app.dynamic
+
+    def __missing__(self, key: str) -> Destination:
+        if self.loader is not None:
+            d = self.loader(key)
+            if d is not None:
+                self[key] = d
+                return d
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key) -> bool:
+        return self.get(key) is not None
+
+
+DEST_BY_ID: dict[str, Destination] = _DestRegistry({d.id: d for d in DESTINATIONS})
 
 COUNTRY_ALIASES: dict[str, str] = {
     "турци": "Турция", "египет": "Египет", "египт": "Египет", "оаэ": "ОАЭ", "эмират": "ОАЭ",

@@ -15,8 +15,8 @@ import random
 import time
 from datetime import date, datetime, timedelta
 
+from . import dynamic, llm, nlu, planner, store
 from . import inventory as inv
-from . import llm, nlu, planner, store
 from .data.destinations import DEST_BY_ID, MONTH_LOC, MONTH_NAMES
 from .data.geo import ORIGIN_BY_CODE
 from .planner import date_range_text, ddmm, deg, hours, rub
@@ -30,6 +30,13 @@ REPLAN_KEYS = {"date_from", "date_to", "month", "nights", "adults", "children_ag
 SILENT: contextvars.ContextVar[bool] = contextvars.ContextVar("silent", default=False)
 
 POSTSALE = {"early_checkin", "late_checkout", "reminders", "cancel_booking", "change_booking", "add_transfer"}
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return many
+    return one if n % 10 == 1 else few if 2 <= n % 10 <= 4 else many
 
 
 def reply(text: str, blocks: list | None = None, chips: list | None = None) -> dict:
@@ -196,6 +203,21 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     unknown = upd.pop("_unknown_place", None)
     if isinstance(unknown, str):
         unknown = {"name": unknown, "prefs": []}
+    if unknown and "destination" not in upd and llm.enabled():
+        # LLM знает любое место: просим карточку места и превращаем её в направление
+        query = unknown.get("query") or unknown["name"]
+        res = dynamic.resolve(query)
+        if res and res["kind"] == "place":
+            turn.tool("llm_place_card", {"place": query}, f"направление: {DEST_BY_ID[res['dest_id']].name}")
+            upd["destination"] = res["dest_id"]
+            unknown = None
+        elif res and res["dest_ids"]:
+            turn.tool("llm_place_card", {"place": query}, f"{res['kind']}: варианты — "
+                      + ", ".join(DEST_BY_ID[i].name for i in res["dest_ids"]))
+            state.unknown_place = {"name": res["label"], "note": res["note"], "kind": res["kind"], "prefs": []}
+            r.candidates, r.similar_to, r.similar_label = res["dest_ids"], [], None
+            r.destination, r.country = None, None
+            unknown = None
     if unknown and "destination" not in upd:
         state.unknown_place = unknown
         upd["prefs"] = sorted(set(upd.get("prefs", [])) | set(unknown["prefs"]))
@@ -204,7 +226,9 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
                    + ", ".join(PREF_LABELS.get(p, p) for p in unknown["prefs"]))
     elif "destination" in upd:
         state.unknown_place = None
-        r.similar_to, r.similar_label = [], None
+        r.similar_to, r.similar_label, r.candidates = [], None, []
+    if "country" in upd:
+        r.candidates = []
     for k, v in list(upd.items()):
         if k.startswith("_") or k not in nlu.SLOT_KEYS:
             continue
@@ -679,6 +703,11 @@ def ask(state: SessionState, missing: list[str], turn: Turn) -> dict:
 
 
 def unknown_note(place: dict) -> str:
+    if place.get("kind") == "region":
+        return f"🧭 {place['name']}: {place['note'] or 'подобрал конкретные места, куда можно поехать'}"
+    if place.get("kind") == "unreachable":
+        note = (place["note"] or "туда не продаются обычные туры").rstrip(". ")
+        return f"❗ {place['name']}: {note}. Подобрал, что реально забронировать."
     like = ", ".join(PREF_LABELS.get(p, p) for p in place["prefs"] if p in PREF_LABELS)
     return (f"❗ Направления «{place['name']}» в нашем каталоге пока нет, поэтому забронировать туда поездку не смогу. "
             + (f"Подберу то, что ближе всего по духу: {like}." if like else "Подберу ближайшие по смыслу варианты."))
@@ -732,7 +761,8 @@ def fill_defaults(state: SessionState, turn: Turn) -> None:
         turn.think(f"Даты не указаны — беру ближайший удобный месяц: {MONTH_NAMES[m - 1]}")
     if not r.nights and not r.date_to:
         dest = DEST_BY_ID.get(r.destination) if r.destination else None
-        r.assumptions["nights"] = f"{planner.default_nights(r, dest)} ночей — типично для такого отдыха"
+        n = planner.default_nights(r, dest)
+        r.assumptions["nights"] = f"{n} {plural(n, 'ночь', 'ночи', 'ночей')} — типично для такого отдыха"
 
 
 # ====================================================================== вдохновение
@@ -859,6 +889,8 @@ def present_plan(state: SessionState, turn: Turn, diff: list[str] | None, intro:
     lines.append(f"Проверил состыковки: {'всё сходится' if not errors and not warns else f'{len(warns)} замечания, см. в карточке'}.")
     for n in plan.get("notes", []):
         lines.append("ℹ️ " + n)
+    if DEST_BY_ID[plan["dest_id"]].source == "llm":
+        lines.append("ℹ️ Сведения о месте (климат, районы, что посмотреть) подготовил ИИ — это оценка, цены и состыковки посчитаны агентом.")
     if r.meal and best["stay"]["meal"] != r.meal and not (r.meal == "AI" and best["stay"]["meal"] == "UAI"):
         lines.append(f"ℹ️ Тарифов «{inv.MEAL_NAMES[r.meal]}» в подходящих отелях нет — здесь работают по системе "
                      f"«{best['stay']['meal_name']}», это уже включает {inv.MEAL_NAMES[r.meal]}.")

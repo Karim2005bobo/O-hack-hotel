@@ -164,6 +164,7 @@
         ${d.cons.length ? `<ul class="list cons">${d.cons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
         ${d.risks.length ? `<ul class="list risks">${d.risks.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
         <div class="sub">Чем заняться: ${esc(d.highlights.slice(0, 2).join("; "))}</div>
+        ${d.ai ? `<div class="sub">Сведения о месте — оценка ИИ</div>` : ""}
         <div class="actions"><button class="primary small">Выбрать</button></div>
       </div>`);
       $(".actions button", card).onclick = () => act({ type: "choose_destination", dest_id: d.dest_id }, `Выбираю ${d.name}`);

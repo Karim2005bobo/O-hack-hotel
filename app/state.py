@@ -37,6 +37,7 @@ class TripRequest(BaseModel):
     avoid: list[str] = Field(default_factory=list)
     similar_to: list[str] = Field(default_factory=list)  # аналоги места, которого нет в каталоге
     similar_label: str | None = None
+    candidates: list[str] = Field(default_factory=list)  # конкретные места региона, которые подобрала LLM
     date_from: str | None = None
     date_to: str | None = None
     month: int | None = None

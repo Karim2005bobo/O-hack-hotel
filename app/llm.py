@@ -74,7 +74,8 @@ stars_min: 2-5; beach_close: bool; center_close: bool; visa_free: bool; priority
 flight_time_pref: "morning"|"day"|"evening"
 _intent: одно из {INTENTS} или не указывай. shift_dates → _shift: дни (+позже/−раньше); extend → _extend: ±ночей.
 choose → _choice_idx (0-based) или _choice_code ("optimal"|"economy"|"comfort").
-_unknown_place: название места, если пользователь назвал страну/город, которых нет в списке направлений.
+_unknown_place: если пользователь назвал место (город, курорт, остров, страну, регион), которого нет в списке
+направлений выше, — его название в именительном падеже (например «Рейкьявик», «Италия», «Антарктида»).
 «без долгих перелётов» → max_flight_h 5.5. Не выдумывай значения."""
 
 
@@ -157,3 +158,53 @@ def answer(question: str, facts: str) -> str | None:
         {"role": "user", "content": question},
     ], max_tokens=400, json_mode=False)
     return raw.strip() if raw else None
+
+
+PLACE_PROMPT = """Ты — справочник путешествий. Пользователь из России назвал место: «{q}».
+Верни ТОЛЬКО JSON со сведениями (реалистичные средние значения, без выдумок):
+{{
+ "kind": "place" — конкретный город/курорт/остров, куда можно поехать;
+         "region" — страна или большой регион (например «Италия», «Европа», «Карибы»);
+         "unreachable" — туда не ездят обычные туристы (Антарктида, Северный полюс, космос, зона войны),
+ "name": "название по-русски", "name_loc": "в Рейкьявике / на Крите", "name_acc": "в Рейкьявик / на Крит",
+ "country": "страна по-русски", "cc": "ISO-код страны из 2 букв",
+ "lat": широта, "lon": долгота, "iata": "код ближайшего аэропорта", "airport_km": км от аэропорта до центра,
+ "tz": смещение UTC зимой (число),
+ "types": подмножество ["beach","city","nature","ski"],
+ "tags": подмножество ["sea","warm","culture","food","party","quiet","romantic","nature","mountains","ski","shopping",
+          "wellness","diving","northern_lights","kids","budget","luxury","all_inclusive","surf","adventure"],
+ "air_max": [12 чисел — средний дневной максимум °C по месяцам с января],
+ "sea": [12 чисел — температура моря у берега] или null, если моря нет,
+ "rain_days": [12 чисел — дождливых дней в месяце],
+ "best_months": [лучшие месяцы для поездки], "ski_months": [], "swim_months": [],
+ "areas": [2–4 района для проживания: {{"name": "...", "airport_km": 20, "beach_m": 100 или null, "center_km": 1.5,
+          "vibe": подмножество ["family","quiet","lively","party","luxury","budget","city","culture","food","nature","ski"]}}],
+ "highlights": [5 конкретных мест и занятий],
+ "hotel_price_rub": цена ночи в номере на двоих 3–4* в рублях,
+ "daily_spend_rub": расходы на месте в день на человека в рублях,
+ "direct_flights_from_moscow": есть ли сейчас прямые рейсы из Москвы (true/false),
+ "visa_note": "визовый режим для граждан РФ, кратко",
+ "risks": {{"номер месяца": "сезонный риск: дожди, тайфуны, жара, закрытие отелей"}},
+ "suggest": для region и unreachable — 3–4 конкретных места-названия, куда реально поехать (для unreachable — откуда туда
+           отправляются или что ближе всего по духу), иначе [],
+ "note": одно предложение-пояснение для пользователя (особенно для region/unreachable)
+}}"""
+
+
+def place_card(query: str) -> dict | None:
+    """Сведения о любом месте мира от LLM (для направлений вне ручного каталога)."""
+    if not enabled():
+        return None
+    raw = _chat([{"role": "system", "content": "Отвечай только валидным JSON."},
+                 {"role": "user", "content": PLACE_PROMPT.format(q=query[:80])}], max_tokens=1600)
+    if not raw:
+        return None
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        log.warning("place_card: не JSON")
+        return None
+

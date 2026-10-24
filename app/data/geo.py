@@ -33,6 +33,22 @@ ORIGINS: list[Origin] = [
 
 ORIGIN_BY_CODE = {o.code: o for o in ORIGINS}
 
+# Пересадочные хабы за рубежом — для направлений без прямых рейсов из России
+FOREIGN_HUBS = {
+    "IST": Origin("IST", "Стамбул", "Стамбула", 41.26, 28.74, 3, (), "Стамбул"),
+    "DXB": Origin("DXB", "Дубай", "Дубая", 25.25, 55.36, 4, (), "Дубай"),
+    "BEG": Origin("BEG", "Белград", "Белграда", 44.82, 20.29, 1, (), "Белград"),
+}
+HUB_AIRLINES = {
+    "IST": [("TK", "Turkish Airlines", False, True), ("PC", "Pegasus", True, True)],
+    "DXB": [("EK", "Emirates", False, True), ("FZ", "flydubai", True, True)],
+    "BEG": [("JU", "Air Serbia", False, True)],
+}
+
+
+def hub_point(code: str) -> Origin:
+    return ORIGIN_BY_CODE.get(code) or FOREIGN_HUBS[code]
+
 # Город вылета, который совпадает с направлением (не предлагаем «из Москвы в Москву»)
 ORIGIN_SAME_DEST = {"MOW": "moscow", "LED": "spb", "KZN": "kazan"}
 
