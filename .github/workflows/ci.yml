@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check app eval tests
+      - run: python -m pytest -q tests
+      - run: APP_TODAY=2026-10-24 DB_PATH=/tmp/eval.db python -m eval.run_eval
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t trip-agent:ci .
+      - run: |
+          docker run -d --name ta -p 8080:8080 trip-agent:ci
+          for i in $(seq 1 20); do curl -fs localhost:8080/health && exit 0; sleep 2; done
+          docker logs ta; exit 1
