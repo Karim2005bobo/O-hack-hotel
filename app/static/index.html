@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Трип-агент Островка</title>
+  <meta name="description" content="AI-агент: от одного сообщения до оформленной поездки">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='30' fill='%230a7cff'/><path d='M14 38c8-10 28-10 36 0' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/><circle cx='32' cy='24' r='6' fill='white'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◉</span>
+    <span class="brand-name">островок</span>
+    <span class="brand-sub">трип-агент</span>
+    <span class="badge-mock" title="Отели, рейсы и цены — синтетические данные, оплата имитируется">прототип · демо-данные</span>
+  </div>
+  <nav class="top-actions">
+    <button class="ghost" data-open="trips">Мои поездки</button>
+    <button class="ghost" data-open="memory">Память</button>
+    <button class="ghost" data-open="metrics">Метрики</button>
+    <button class="primary small" id="newTrip">Новая поездка</button>
+    <button class="ghost panel-toggle" id="panelToggle" aria-label="План поездки">План</button>
+  </nav>
+</header>
+
+<main class="layout">
+  <section class="chat">
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <div id="chips" class="chips"></div>
+    <form id="composer" class="composer" autocomplete="off">
+      <textarea id="input" rows="1" placeholder="Например: к тёплому морю в ноябре с ребёнком 5 лет, недорого, без долгих перелётов"></textarea>
+      <button type="submit" class="primary" id="sendBtn" aria-label="Отправить">➤</button>
+    </form>
+  </section>
+
+  <aside class="panel" id="panel">
+    <div class="panel-card mobile-only">
+      <button class="ghost" data-open="trips">Мои поездки</button>
+      <button class="ghost" data-open="memory">Память</button>
+      <button class="ghost" data-open="metrics">Метрики</button>
+    </div>
+    <div class="panel-card">
+      <div class="panel-title">Что я понял <span class="hint">нажмите, чтобы поправить</span></div>
+      <div id="slots" class="slots"><div class="muted">Пока ничего — расскажите о поездке.</div></div>
+      <div class="legend"><span class="src src-user">вы</span><span class="src src-memory">из памяти</span><span class="src src-assumed">допущение</span></div>
+    </div>
+    <div class="panel-card">
+      <div class="panel-title">Что важнее</div>
+      <div class="segmented" id="priority">
+        <button data-p="price">Цена</button><button data-p="balance">Баланс</button>
+        <button data-p="comfort">Комфорт</button><button data-p="time">Дорога</button>
+      </div>
+    </div>
+    <div class="panel-card" id="cartCard" hidden>
+      <div class="panel-title">Корзина</div>
+      <div id="cartMini"></div>
+    </div>
+    <div class="panel-card grow">
+      <div class="panel-title">Ход мыслей агента <span class="hint" id="elapsed"></span></div>
+      <ol id="trace" class="trace"><li class="muted">Здесь видно, что агент понял, какие инструменты вызвал и почему.</li></ol>
+    </div>
+  </aside>
+</main>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-box">
+    <button class="modal-close" id="modalClose" aria-label="Закрыть">✕</button>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
