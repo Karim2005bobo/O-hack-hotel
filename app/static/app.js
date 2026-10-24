@@ -343,7 +343,7 @@
     else {
       box.innerHTML = "";
       s.slots.forEach((sl) => {
-        const src = { user: ["вы", "src-user"], memory: ["из памяти", "src-memory"], assumed: ["допущение", "src-assumed"], agent: ["агент", "src-agent"] }[sl.source] || ["", ""];
+        const src = { user: ["вы", "src-user"], memory: ["из памяти", "src-memory"], assumed: ["допущение", "src-assumed"], agent: ["подобрал агент", "src-agent"] }[sl.source] || ["", ""];
         const row = h(`<div class="slot ${sl.editable ? "editable" : ""}"><span class="slot-label">${esc(sl.label)}</span><span class="slot-value">${esc(sl.value)}${src[0] && sl.source !== "user" ? `<span class="src ${src[1]}">${src[0]}</span>` : ""}</span></div>`);
         if (sl.editable) row.onclick = () => { const inp = $("#input"); inp.value = EDIT_HINTS[sl.key] || ""; inp.focus(); closePanel(); };
         box.appendChild(row);

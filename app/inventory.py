@@ -75,15 +75,15 @@ MEAL_NAMES = {"RO": "без питания", "BB": "завтраки", "HB": "п
 
 
 def _hotel_name(dest: Destination, r: random.Random, used: set[str], kind: str) -> str:
-    for _ in range(50):
-        if dest.domestic or dest.country in ("Абхазия",):
-            name = f"{r.choice(RU_PREFIX)} «{r.choice(RU_WORDS)}»"
-        else:
-            name = f"{r.choice(FOREIGN_NAMES[kind])} {r.choice(FOREIGN_SUFFIX[kind])}"
-        if name not in used:
-            used.add(name)
-            return name
-    return name + f" {len(used)}"
+    """Уникальное в пределах направления имя: ключевое слово не повторяется."""
+    ru = dest.domestic or dest.country in ("Абхазия",)
+    words = RU_WORDS if ru else FOREIGN_NAMES[kind]
+    free = [w for w in words if w not in used] or words
+    word = r.choice(free)
+    used.add(word)
+    if ru:
+        return f"{r.choice(RU_PREFIX)} «{word}»"
+    return f"{word} {r.choice(FOREIGN_SUFFIX[kind])}"
 
 
 @cache
@@ -124,7 +124,7 @@ def _hotels(dest_id: str) -> tuple[dict, ...]:
         spa = stars >= 4 and r.random() < 0.7 or arch == "luxury"
         family_rooms = arch == "family" or (not adults_only and r.random() < 0.45)
         kitchen = arch == "pets" and dest.domestic or (arch == "standard" and r.random() < 0.2)
-        pets_allowed = arch == "pets" or (dest.domestic and r.random() < 0.35)
+        pets_allowed = arch == "pets" or r.random() < (0.5 if dest.domestic else 0.2 if dest.pets in ("easy", "docs") else 0)
         if dest.pets == "banned":
             pets_allowed = False
         lively = "party" in area.vibe or "lively" in area.vibe

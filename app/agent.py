@@ -1522,7 +1522,9 @@ def summary(state: SessionState) -> dict:
         add("country", "Куда", r.country)
     elif state.stage != "start":
         add("destination", "Куда", "подбираю", "agent", False)
-    if r.date_from:
+    if state.plan and state.stage in ("bundles", "cart", "checkout"):
+        add("dates", "Когда", state.plan["dates_text"], "user" if r.date_from and not r.flexible else "agent")
+    elif r.date_from:
         d1 = date.fromisoformat(r.date_from)
         txt = date_range_text(d1, date.fromisoformat(r.date_to)) if r.date_to else f"с {ddmm(d1)}"
         add("dates", "Когда", txt)
