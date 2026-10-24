@@ -97,6 +97,7 @@
   // ------------------------------------------------------------------ блоки
   function renderBlock(b) {
     switch (b.type) {
+      case "intro": return h(`<div class="steps">${b.steps.map((x, i) => `<div class="step"><div class="step-ic">${x.icon}</div><div><b>${i + 1}. ${esc(x.title)}</b><br><span class="muted">${esc(x.text)}</span></div></div>`).join("")}</div>`);
       case "destinations": return destBlock(b);
       case "plan": return planBlock(b.plan);
       case "diff": return h(`<div class="diff"><b>Что изменилось:</b><ul class="list info">${b.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`);
