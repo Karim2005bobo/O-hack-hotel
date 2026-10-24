@@ -197,7 +197,7 @@ def parse_dates(t: str, out: dict) -> None:
                     chosen = mon
                     break
             chosen = chosen or months[0]
-            out.update(month=chosen, year=_year_for(chosen, 28))
+            out.update(month=chosen, year=_year_for(chosen, 28), _season=months)
             return
     if re.search(r"\bсейчас\b|\bсрочно\b|в ближайш\w* (время|дни|неделю)|прямо сейчас|на днях", t):
         d = td + timedelta(days=4)
@@ -321,13 +321,14 @@ def parse_party(t: str, out: dict, expect_ages: bool = False) -> None:
     if adults is None:
         partner = re.search(r"с\s+(женой|мужем|супруг\w*|девушкой|парнем|подругой|другом|любим\w+|второй половин\w*|невестой|"
                             r"женихом|бойфренд\w*|мамой|папой|сестрой|братом|коллегой|бабушкой|дедушкой)", t)
-        parents = re.search(r"с\s+родителями", t)
+        parents = re.search(r"с\s+(\w+\s+)?родител", t)
         pair = re.search(r"(мамы|папы|мамой|папой|мужа|жены|подруги|друга|сестры|брата)\s+и\s+(меня|мной|я)|(меня|я)\s+и\s+(мамы|мамой|папы|мужа|жены)", t)
         friends = re.search(r"с\s+друзьями|с\s+подругами|компанией|с\s+коллегами", t)
         solo = re.search(r"\b(соло|в одиночку|один|одна|сам|сама)\b", t) and re.search(
             r"(еду|поеду|лечу|полечу|отдыхаю|путешествую|отправлюсь|хочу|буду|я)\s+(один|одна|сам|сама)\b|\bсоло\b|в одиночку|"
             r"(один|одна)\s+(еду|поеду|лечу|полечу|хочу|отдыхать|отдохнуть)", t)
         family = re.search(r"\bсемь[её]й\b|всей семь", t)
+        business = re.search(r"по работе|командировк|на конференц|деловая поездк", t)
         both_partner = re.search(r"с\s+(женой|мужем|супруг\w*)\s+и\s+(реб|дет|сын|доч)", t)
         if both_partner or (partner and n_kids):
             adults = 2
@@ -339,7 +340,7 @@ def parse_party(t: str, out: dict, expect_ages: bool = False) -> None:
             adults = 2
         elif friends:
             adults = 4
-        elif solo:
+        elif solo or business:
             adults = 1
         elif family or n_kids:
             adults = 2
@@ -397,7 +398,7 @@ def parse_budget(t: str, out: dict) -> None:
 def parse_places(t: str, out: dict) -> None:
     # город вылета
     origin_spans = []
-    for m in re.finditer(r"(?:\bиз|\bот|вылет\w*\s+из|живу\s+в|живем\s+в|я\s+в|мы\s+в|я\s+из|мы\s+из|с\s+вылетом\s+из|"
+    for m in re.finditer(r"(?<![а-я])(?:из|от|вылет\w*\s+из|живу\s+в|живем\s+в|я\s+в|мы\s+в|я\s+из|мы\s+из|с\s+вылетом\s+из|"
                          r"стартуем\s+из|выезжаем\s+из|едем\s+из|летим\s+из|летим\s+с|из\s+г\.?)\s+([а-я-]+(?:\s+[а-я-]+)?)", t):
         chunk = m.group(1)
         for o in ORIGINS:
@@ -461,6 +462,8 @@ def parse_prefs(t: str, out: dict) -> None:
         prefs = [p for p in prefs if p != "party"] + ["quiet"]
     if "sea" in prefs and re.search(r"\bморе не\b|без моря|не (на )?море", t):
         prefs.remove("sea")
+    if re.search(r"не в сезон дожд|без дожд|чтобы не было дожд|сухой сезон|не дождлив|не хочу (под )?дожд|не хочу ливн", t):
+        prefs.append("dry")
     if {"surf", "diving"} & set(prefs):
         prefs.append("sea")
     if re.search(r"бассейн", t):
@@ -471,15 +474,18 @@ def parse_prefs(t: str, out: dict) -> None:
         pass
     if prefs:
         out["prefs"] = sorted(set(prefs))
-    # питание
-    if re.search(r"вс[её]\s*включен|олл\s*инклюзив|all\s*inclusive|ультра|\bai\b|\buai\b", t):
-        out["meal"] = "AI"
-    elif re.search(r"полупансион|завтрак\w* и ужин", t):
-        out["meal"] = "HB"
-    elif re.search(r"с\s+завтрак|завтрак\w* включ|только завтрак|завтраки", t):
-        out["meal"] = "BB"
-    elif re.search(r"без питания", t):
-        out["meal"] = "RO"
+    # питание: учитываем «вместо всё включено», «не нужно всё включено»
+    meal_pats = [("AI", r"вс[её]\s*включен|олл\s*инклюзив|all\s*inclusive|ультра|\bai\b|\buai\b"),
+                 ("HB", r"полупансион|завтрак\w* и ужин"), ("BB", r"с\s+завтрак|завтрак\w* включ|только завтрак|завтрак"),
+                 ("RO", r"без питания|сами (будем )?готовить")]
+    hits = []
+    for code, pat in meal_pats:
+        for m in re.finditer(pat, t):
+            neg = re.search(r"(вместо|не нужн\w*|не надо|не хочу|без|кроме|не)\s+$", t[max(0, m.start() - 14): m.start()])
+            if not neg:
+                hits.append((m.start(), code))
+    if hits:
+        out["meal"] = sorted(hits)[0][1] if len({c for _, c in hits}) == 1 else min(hits, key=lambda x: ["HB", "AI", "BB", "RO"].index(x[1]))[1]
     # отмена
     if re.search(r"бесплатн\w* отмен|возможность\w* отмен|можно было отменить|с отменой|возвратн\w* тариф|вернуть деньги|"
                  r"гибк\w* тариф|планы могут поменяться|могут измениться", t) and not re.search(r"невозвратн\w* (ок|подойд|можно|норм)", t):
@@ -487,7 +493,8 @@ def parse_prefs(t: str, out: dict) -> None:
     if re.search(r"невозвратн\w* (ок|подойд|можно|норм)|отмена не нужна|не нужна отмена", t):
         out["free_cancel"] = False
     # транспорт
-    if re.search(r"на поезде|поездом|\bржд\b|не летать|боюсь летать|без самолет|не хочу лететь|не люблю летать|на сапсане|ласточк", t):
+    if re.search(r"на поезде|поездом|\bржд\b|не летать|боюсь летать|без самолет|не хочу лететь|не люблю летать|на сапсане|ласточк|"
+                 r"без\s+перел[её]т(ов|а)?(?![а-я])|не на самолет", t):
         out["transport"] = "train"
     elif re.search(r"на самолете|самолетом|только перел[её]т|не на поезде|без поезд", t):
         out["transport"] = "plane"
@@ -515,7 +522,7 @@ def parse_prefs(t: str, out: dict) -> None:
         out.setdefault("prefs", [])
         if "sea" not in out["prefs"]:
             out["prefs"] = sorted(set(out["prefs"] + ["sea"]))
-    if re.search(r"в центре|в самом центре|ближе к центру|центр города", t):
+    if re.search(r"в центре|в самом центре|ближе к центру|центр города|рядом с центром|недалеко от центра|в центральн", t):
         out["center_close"] = True
     if re.search(r"без виз|безвиз|виз\w* не|не нужна виза|чтобы не нужна была виза", t):
         out["visa_free"] = True
@@ -601,12 +608,16 @@ def parse_intent(t: str, out: dict, stage: str) -> None:
     elif has(r"подороже|получше|покруче|посолиднее|побогаче|дороже можно|бюджет\w*\s+(больше|побольше|выше)|увелич\w+ бюджет|"
              r"можно потратить больше"):
         out["_intent"] = "pricier"
+    elif has(r"без трансфер|трансфер не нужен|трансфер не надо|сами доберемся|сами доедем|доберемся сами|уберите трансфер|убери трансфер"):
+        out["_intent"] = "no_transfer"
+    elif stage in ("bundles", "cart") and has(r"(добавь|нужен|верни|с)\s+трансфер"):
+        out["_intent"] = "with_transfer"
     elif has(r"страховк"):
         out["_intent"] = "add_insurance"
     elif has(r"оплат|оплачи|плачу|заплат"):
         out["_intent"] = "pay"
     elif has(r"\bберу\b|берем|бронир|оформ|покупа|купить|куплю|в корзину|подходит|годится|устраивает|забронируй|давай (его|этот|эту|так)|"
-             r"^(да|ок|окей|давай|отлично|супер|хорошо)[\s,.!]*(бер|оформ|брон)?\w*[.!]?$"):
+             r"^(да|ок|окей|давай|отлично|супер|хорошо)[\s,.!]*((бер|оформ|брон)\w*)?[.!]*$"):
         out["_intent"] = "book"
     elif has(r"погод|что посмотреть|чем заняться|что делать|достопримеч|какая (там )?виза|нужна ли виза|какие документ|"
              r"что взять|расскажи (про|о)|что (там )?интересн"):
@@ -618,11 +629,16 @@ def parse_intent(t: str, out: dict, stage: str) -> None:
         out["_intent"] = "greet"
     # выбор пункта
     if stage in ("destinations", "bundles") and out.get("_intent") in (None, "book"):
-        if stage == "bundles":
-            for pat, code in ((r"оптимальн", "optimal"), (r"экономн|эконом\b|самый дешев", "economy"), (r"комфорт", "comfort")):
+        slots_here = any(not k.startswith("_") for k in out)
+        priority_talk = has(r"главное|важнее|приоритет|в первую очередь")
+        if stage == "bundles" and not priority_talk:
+            for pat, code in ((r"оптимальн", "optimal"), (r"экономн\w* вариант|вариант\w* эконом|беру эконом|давай эконом|^экономн\w*[.!]?$", "economy"),
+                              (r"комфорт\w* вариант|вариант\w* комфорт|беру комфорт|давай комфорт|^комфорт\w*[.!]?$|«комфорт»", "comfort")):
                 if has(pat):
                     out["_choice_code"] = code
         for pat, idx in ORDINALS:
+            if slots_here:
+                pat = pat.split("|")[0]  # при наличии слотов цифры — это возраст/количество, а не номер варианта
             if has(pat) and not has(r"\d+\s*(лет|год|ноч|дн|час|тыс|к\b|взросл|дет|чел)") and len(t) < 60:
                 out["_choice_idx"] = idx
                 break
@@ -643,6 +659,15 @@ def parse(text: str, stage: str = "start", expect: str | None = None) -> dict:
     parse_places(t, out)
     parse_prefs(t, out)
     parse_intent(t, out, stage)
+    season = out.pop("_season", None)
+    if season and out.get("destination"):
+        # «Байкал зимой» → выбираем лучший для направления месяц внутри сезона
+        from .data.destinations import DEST_BY_ID
+        good = [m for m in season if m in DEST_BY_ID[out["destination"]].high_months]
+        if good and out["month"] not in good:
+            out["month"], out["year"] = good[0], _year_for(good[0], 28)
+    if out.get("max_flight_h") == 5.5 and out.get("nights", 99) <= 3:
+        out["max_flight_h"] = 3.0  # «недалеко на выходные» — строже
     if out.get("_intent") in ("shift_dates", "extend"):
         for k in ("date_from", "date_to", "nights", "month", "year"):
             out.pop(k, None)

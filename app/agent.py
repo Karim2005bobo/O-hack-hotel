@@ -441,6 +441,14 @@ def route(state: SessionState, upd: dict, intent: str | None, message: str | Non
     if intent == "back_to_plan" and state.plan:
         state.stage = "bundles"
         return present_plan(state, turn, None)
+    if intent in ("no_transfer", "with_transfer") and state.plan:
+        state.pinned["no_transfer"] = intent == "no_transfer"
+        turn.think("Трансфер " + ("убираю — доберётесь сами" if intent == "no_transfer" else "возвращаю в план"))
+        if state.stage == "cart" and state.cart:
+            return rebuild_cart(state, turn, "Убрал трансфер." if intent == "no_transfer" else "Добавил трансфер.")
+        return do_plan(state, turn, replan=True, reason="Без трансфера — доберётесь сами." if intent == "no_transfer" else "Вернул трансфер в план.")
+    if intent == "book" and "destination" in changed:
+        intent = None
     if intent == "book":
         if state.stage == "bundles" and state.plan:
             idx = state.plan.get("selected") or 0
@@ -483,13 +491,56 @@ def route(state: SessionState, upd: dict, intent: str | None, message: str | Non
                 return present_cart(state, "Корзина без изменений. Готовы оформить?")
             return present_plan(state, turn, None, intro="План прежний. Что поменять?")
         replan = state.plan is not None
-        return do_plan(state, turn, replan=replan, reason=("Условия изменились — пересобрал план, а не искал с нуля."
-                                                            if replan else None))
+        what = describe_changes(changed, state.req)
+        reason = None
+        if replan:
+            keep = ("Собрал поездку под новое направление, остальные условия сохранил." if "destination" in changed else
+                    "Пересобрал план, а не искал с нуля — направление и ваш выбор сохранил, где это возможно.")
+            reason = (f"Учёл: {what}. " if what else "") + keep
+        return do_plan(state, turn, replan=replan, reason=reason)
     if changed or state.stage in ("start", "clarify") or not state.dest_options:
         if state.stage in ("start", "clarify") and not changed and not intent:
             return fallback(state, message, turn)
-        return do_destinations(state, turn, reason=("Условия изменились — перестроил подборку." if state.dest_options and changed else None))
+        what = describe_changes(changed, state.req)
+        return do_destinations(state, turn, reason=(f"Учёл: {what}. Перестроил подборку." if state.dest_options and changed and what else None))
     return fallback(state, message, turn)
+
+
+def describe_changes(changed: set[str], r: TripRequest) -> str:
+    bits = []
+    if "destination" in changed and r.destination:
+        bits.append(f"направление — {DEST_BY_ID[r.destination].name}")
+    if "origin" in changed and r.origin:
+        bits.append(f"вылет из {ORIGIN_BY_CODE[r.origin].name_gen}")
+    if changed & {"date_from", "date_to", "month"}:
+        bits.append("новые даты")
+    if "nights" in changed and r.nights:
+        bits.append(f"{r.nights} ноч.")
+    if changed & {"adults", "children_ages", "children_pending"}:
+        bits.append(f"состав — {r.adults or 2} взрослых" + (" и дети " + ", ".join(map(str, r.children_ages)) + " лет" if r.children_ages else ""))
+    if "pets" in changed:
+        bits.append("едет питомец — только отели и рейсы, где можно с животными" if r.pets else "без питомца")
+    if "budget" in changed and r.budget:
+        bits.append(f"бюджет до {rub(r.budget)}")
+    if "meal" in changed and r.meal:
+        bits.append(f"питание — {inv.MEAL_NAMES[r.meal]}")
+    if "direct_only" in changed and r.direct_only:
+        bits.append("только прямые рейсы")
+    if "flight_time_pref" in changed and r.flight_time_pref:
+        bits.append({"morning": "утренний вылет", "day": "дневной вылет", "evening": "вечерний вылет"}[r.flight_time_pref])
+    if "free_cancel" in changed and r.free_cancel:
+        bits.append("бесплатная отмена")
+    if "stars_min" in changed and r.stars_min:
+        bits.append(f"отели от {r.stars_min}★")
+    if "priority" in changed:
+        bits.append(PRIORITY_LABELS[r.priority].lower())
+    if "transport" in changed:
+        bits.append({"train": "поездом", "plane": "самолётом"}.get(r.transport, "любой транспорт"))
+    if "max_flight_h" in changed and r.max_flight_h:
+        bits.append(f"в пути до {r.max_flight_h:g} ч")
+    if "prefs" in changed:
+        bits.append("интересы: " + ", ".join(PREF_LABELS.get(p, p) for p in r.prefs if p in PREF_LABELS))
+    return "; ".join(bits)
 
 
 def fallback(state: SessionState, message: str | None, turn: Turn) -> dict:
@@ -529,6 +580,8 @@ def missing_slots(state: SessionState) -> list[str]:
     missing = []
     if not r.has_when() and "when" not in state.asked:
         missing.append("when")
+    if r.origin is None and r.destination == "moscow" and "origin" not in state.asked:
+        missing.append("origin")  # по умолчанию считали бы вылет из Москвы — тут так нельзя
     if r.children_pending and "children_ages" not in state.asked:
         missing.append("children_ages")
     if not missing:
@@ -536,7 +589,7 @@ def missing_slots(state: SessionState) -> list[str]:
     # раз уж спрашиваем — заодно уточним то, что сильно влияет на цену
     if r.adults is None and not r.has_kids and "party" not in state.asked:
         missing.append("party")
-    if r.origin is None and "origin" not in state.asked:
+    if r.origin is None and "origin" not in state.asked and "origin" not in missing:
         missing.append("origin")
     return missing
 
@@ -575,7 +628,9 @@ def ask(state: SessionState, missing: list[str], turn: Turn) -> dict:
             chips_.append(chip(label, action={"type": "set", "key": "party", "value": {"adults": profile["adults"], "children": kids}}))
         chips_ += [chip("Вдвоём"), chip("Один/одна"), chip("Семьёй с ребёнком")]
     if "origin" in missing:
-        qs.append("Откуда стартуете? (по умолчанию — Москва)")
+        qs.append("Откуда едете?" if r.destination == "moscow" else "Откуда стартуете? (по умолчанию — Москва)")
+        if r.destination == "moscow":
+            chips_ += [chip("Из Петербурга"), chip("Из Казани"), chip("Из Екатеринбурга")]
     chips_.append(chip("Неважно, подбери сам", action={"type": "skip"}))
     turn.think("Без этого нельзя посчитать цены и погоду — спрашиваю одним сообщением: " + ", ".join(missing))
     text = (understood + "\n\n" if understood else "") + "Чтобы подобрать точно, уточню:\n" + "\n".join(f"• {q}" for q in qs)
@@ -753,6 +808,21 @@ def present_plan(state: SessionState, turn: Turn, diff: list[str] | None, intro:
     lines.append(f"Проверил состыковки: {'всё сходится' if not errors and not warns else f'{len(warns)} замечания, см. в карточке'}.")
     for n in plan.get("notes", []):
         lines.append("ℹ️ " + n)
+    if r.meal and best["stay"]["meal"] != r.meal and not (r.meal == "AI" and best["stay"]["meal"] == "UAI"):
+        lines.append(f"ℹ️ Тарифов «{inv.MEAL_NAMES[r.meal]}» в подходящих отелях нет — здесь работают по системе "
+                     f"«{best['stay']['meal_name']}», это уже включает {inv.MEAL_NAMES[r.meal]}.")
+    dest = DEST_BY_ID[plan["dest_id"]]
+    month = date.fromisoformat(plan["date_from"]).month
+    risk = dest.risks.get(month)
+    weather_warn = None
+    if risk:
+        weather_warn = risk
+    elif "dry" in r.prefs and plan["weather"]["rain_days"] >= 10:
+        weather_warn = f"в это время ~{plan['weather']['rain_days']} дождливых дней"
+    if weather_warn:
+        dry = [m for m in range(1, 13) if dest.rain[m - 1] <= 7 and (not dest.sea or m in dest.swim_months or not dest.swim_months)]
+        tip = f" Лучшее время для поездки: {months_span(dry)}." if dry and len(dry) < 12 else ""
+        lines.insert(1 if intro else 0, f"⚠️ **Важно про {dest.name}:** {weather_warn}.{tip} Могу подобрать альтернативу на эти же даты.")
     if r.assumptions:
         lines.append("\n_Допущения: " + "; ".join(r.assumptions.values()) + " — поправьте, если не так._")
     blocks = []
@@ -767,7 +837,28 @@ def present_plan(state: SessionState, turn: Turn, diff: list[str] | None, intro:
                chip("С нами едет собака", "с нами едет собака") if not r.pets else chip("Другие отели", action={"type": "show_hotels"}),
                chip("Почему этот отель?", action={"type": "why"}),
                chip("Другие направления", action={"type": "show_destinations"})]
+    if weather_warn:
+        chips_.insert(1, chip("Альтернатива без дождей" if "дожд" in weather_warn or "муссон" in weather_warn else "Подобрать альтернативу",
+                              action={"type": "show_destinations"}))
     return reply("\n".join(lines), blocks, chips_)
+
+
+def months_span(months: list[int]) -> str:
+    """[5,6,7,8,9] → «май–сентябрь»; несвязные — через запятую."""
+    if not months:
+        return ""
+    ms = sorted(months)
+    groups, cur = [], [ms[0]]
+    for m in ms[1:]:
+        if m == cur[-1] + 1:
+            cur.append(m)
+        else:
+            groups.append(cur)
+            cur = [m]
+    groups.append(cur)
+    if len(groups) > 1 and groups[0][0] == 1 and groups[-1][-1] == 12:
+        groups[0] = groups.pop() + groups[0]
+    return ", ".join(MONTH_NAMES[g[0] - 1] + (f"–{MONTH_NAMES[g[-1] - 1]}" if len(g) > 1 else "") for g in groups)
 
 
 def slim_plan(plan: dict) -> dict:

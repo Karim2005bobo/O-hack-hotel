@@ -169,6 +169,10 @@ def score_transport(t: dict, req: TripRequest, all_opts: list[dict]) -> tuple[fl
     if 0 <= arr.hour < 5:
         s -= 0.08
         cons.append(f"прибытие ночью в {arr:%H:%M}")
+    if t["id"].endswith("-back") and dep.hour < 6:
+        short = (req.nights or 7) <= 3
+        s -= 0.3 if short else 0.12
+        cons.append(f"обратно ночью в {dep:%H:%M}: последний вечер без номера")
     pref = req.flight_time_pref
     if pref:
         ok = {"morning": 5 <= dep.hour < 11, "day": 11 <= dep.hour < 17, "evening": 17 <= dep.hour <= 23}[pref]
@@ -271,6 +275,8 @@ def score_hotel(h: dict, req: TripRequest, dest: Destination) -> tuple[float, li
     if h["reviews"] < 150:
         cons.append("мало отзывов — меньше уверенности")
     for p in h["pros"]:
+        if not req.has_kids and "детск" in p:
+            continue
         dup_beach = "пляж" in p and any("пляж" in x or "моря" in x for x in pros)
         if p not in pros and len(pros) < 5 and ("пляж" not in p or wants_sea) and not dup_beach:
             pros.append(p)
@@ -445,12 +451,22 @@ def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit:
             if month in d.ski_months:
                 s += 1.6
                 why.append("сезон катания")
+            elif "ski" not in d.tags:
+                s -= 2.0
+                cons.append("нет горнолыжных трасс")
+        if "dry" in prefs and w["rain_days"] >= 10:
+            s -= 1.2
+            cons.append(f"сезон дождей: ~{w['rain_days']} дождливых дней")
+        leisure = {"romantic", "quiet", "wellness", "food"}
+        if prefs and prefs <= leisure | {"pool", "kitchen"} and w["air"] >= 22:
+            s += 0.35
         if "northern_lights" in prefs:
             if month in d.lights_months:
                 s += 1.6
                 why.append("сезон северного сияния")
             else:
-                s -= 0.5
+                s -= 2.0 if "northern_lights" not in d.tags else 0.5
+                cons.append("северное сияние здесь не увидеть" if "northern_lights" not in d.tags else "не сезон сияния")
         if w["rain_days"] >= 14:
             s -= 0.5
             risks.append(f"дождливо: около {w['rain_days']} дождливых дней в месяц")
@@ -903,6 +919,7 @@ def _make_bundle(req, dest, o, b, h, d1, d2, pinned, cache) -> dict | None:
         "per_person": total // max(1, a + len(ch)),
         "party": {"adults": a, "children": ch},
         "dest_id": dest.id,
+        "no_transfer_ok": bool(no_transfer),
     }
     bundle["issues"] = check_connections(bundle, req)
     return bundle
