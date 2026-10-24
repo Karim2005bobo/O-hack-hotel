@@ -79,9 +79,9 @@ def update_profile(state: SessionState, booking: dict | None = None) -> None:
     r = state.req
     if r.origin and r.origin_source == "user":
         p["origin"] = r.origin
-    if r.adults:
+    if r.adults and "adults" not in r.assumptions:
         p["adults"] = r.adults
-    if r.children_ages:
+    if r.children_ages and "children" not in r.assumptions:
         p["children"] = [{"age": a, "year": today().year} for a in r.children_ages]
     if r.pets:
         p["pets"] = r.pets
@@ -93,11 +93,11 @@ def update_profile(state: SessionState, booking: dict | None = None) -> None:
         p["priority"] = r.priority
     if r.budget_level:
         p["budget_level"] = r.budget_level
-    counts = p.get("prefs", {})
-    for x in r.prefs:
-        counts[x] = counts.get(x, 0) + 1
-    p["prefs"] = counts
     if booking:
+        counts = p.get("prefs", {})
+        for x in r.prefs:
+            counts[x] = counts.get(x, 0) + 1
+        p["prefs"] = counts
         trips = p.get("trips", [])
         trips.append({"dest_id": booking["dest_id"], "dest_name": booking["dest_name"], "dates": booking["dates_text"],
                       "booking_id": booking["id"]})
@@ -206,6 +206,8 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
         if k == "country" and "destination" not in upd:
             r.destination = None
         setattr(r, k, v)
+    if r.destination is None and state.plan:
+        state.plan, state.cart, state.pinned = None, None, {}
     if "children_ages" in upd or "children_pending" in upd:
         profile = store.get_profile(state.user_id)
         mem = memory_kids(profile)
@@ -773,6 +775,7 @@ def do_plan(state: SessionState, turn: Turn, replan: bool = False, reason: str |
     state.stage = "bundles"
     state.cart = None
     mark_reco(state)
+    update_profile(state)
     diff = planner.plan_diff(old, plan) if replan else []
     if replan:
         state.replans += 1
