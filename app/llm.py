@@ -74,6 +74,7 @@ stars_min: 2-5; beach_close: bool; center_close: bool; visa_free: bool; priority
 flight_time_pref: "morning"|"day"|"evening"
 _intent: одно из {INTENTS} или не указывай. shift_dates → _shift: дни (+позже/−раньше); extend → _extend: ±ночей.
 choose → _choice_idx (0-based) или _choice_code ("optimal"|"economy"|"comfort").
+_unknown_place: название места, если пользователь назвал страну/город, которых нет в списке направлений.
 «без долгих перелётов» → max_flight_h 5.5. Не выдумывай значения."""
 
 
@@ -140,6 +141,8 @@ def _validate(d: dict) -> dict:
             ok[k] = v
         elif k == "_intent" and v in INTENTS:
             ok[k] = v
+        elif k == "_unknown_place" and isinstance(v, str) and v.strip():
+            ok[k] = v.strip()[:60]
         elif k == "_choice_code" and v in ("optimal", "economy", "comfort"):
             ok[k] = v
     return ok

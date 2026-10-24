@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import contextvars
 import random
 import time
 from datetime import date, datetime, timedelta
@@ -24,6 +25,10 @@ from .state import PREF_LABELS, PRIORITY_LABELS, SessionState, TripRequest, toda
 REPLAN_KEYS = {"date_from", "date_to", "month", "nights", "adults", "children_ages", "children_pending", "pets", "budget",
                "budget_level", "prefs", "meal", "free_cancel", "direct_only", "max_flight_h", "transport", "stars_min",
                "beach_close", "center_close", "priority", "flight_time_pref", "origin", "accessible", "visa_free"}
+# «Тихий» ход: пользователь переключил настройку (приоритет, тариф, допы) — карточку
+# обновляем на месте, без реплики в чате и без сообщения «я переключил».
+SILENT: contextvars.ContextVar[bool] = contextvars.ContextVar("silent", default=False)
+
 POSTSALE = {"early_checkin", "late_checkout", "reminders", "cancel_booking", "change_booking", "add_transfer"}
 
 
@@ -188,6 +193,18 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     adults_assumed = upd.pop("_adults_assumed", False)
     upd.pop("_open_destination", None)
     kids_unknown = upd.pop("_kids_count_unknown", False)
+    unknown = upd.pop("_unknown_place", None)
+    if isinstance(unknown, str):
+        unknown = {"name": unknown, "prefs": []}
+    if unknown and "destination" not in upd:
+        state.unknown_place = unknown
+        upd["prefs"] = sorted(set(upd.get("prefs", [])) | set(unknown["prefs"]))
+        r.similar_to, r.similar_label = list(unknown.get("similar", [])), unknown["name"]
+        turn.think(f"«{unknown['name']}» нет в каталоге — подберу похожее по духу: "
+                   + ", ".join(PREF_LABELS.get(p, p) for p in unknown["prefs"]))
+    elif "destination" in upd:
+        state.unknown_place = None
+        r.similar_to, r.similar_label = [], None
     for k, v in list(upd.items()):
         if k.startswith("_") or k not in nlu.SLOT_KEYS:
             continue
@@ -307,6 +324,7 @@ def handle(state: SessionState, message: str | None = None, action: dict | None 
     elif action and state.first_user_at is None:
         state.first_user_at = time.time()
 
+    silent_token = SILENT.set(bool(action and action.get("silent")))
     if action:
         upd = action_to_updates(action)
         turn.think(f"Действие из интерфейса: {action.get('type')}")
@@ -333,7 +351,10 @@ def handle(state: SessionState, message: str | None = None, action: dict | None 
     state.trace = turn.trace
     out["trace"] = turn.trace
     out["elapsed_ms"] = int((time.time() - turn.t0) * 1000)
-    state.history.append({"role": "agent", "text": out["text"], "ts": time.time()})
+    out["silent"] = SILENT.get()
+    if not out["silent"]:
+        state.history.append({"role": "agent", "text": out["text"], "ts": time.time()})
+    SILENT.reset(silent_token)
     return out
 
 
@@ -394,6 +415,16 @@ def route(state: SessionState, upd: dict, intent: str | None, message: str | Non
     changed = apply_updates(state, upd, turn)
     if changed:
         turn.think("Изменилось: " + ", ".join(sorted(changed)))
+    if SILENT.get() and intent is None:
+        # переключили настройку: пересобираем видимую карточку, если она есть, иначе только запоминаем
+        if not changed:
+            return reply("")
+        if state.stage == "bundles" and state.plan and state.req.destination:
+            return do_plan(state, turn, replan=True)
+        if state.stage == "destinations" and state.dest_options:
+            return do_destinations(state, turn)
+        turn.think("Настройку запомнил — применю при следующем подборе")
+        return reply("")
 
     if intent == "greet" and not changed:
         return welcome(state)
@@ -642,7 +673,15 @@ def ask(state: SessionState, missing: list[str], turn: Turn) -> dict:
     chips_.append(chip("Неважно, подбери сам", action={"type": "skip"}))
     turn.think("Без этого нельзя посчитать цены и погоду — спрашиваю одним сообщением: " + ", ".join(missing))
     text = (understood + "\n\n" if understood else "") + "Чтобы подобрать точно, уточню:\n" + "\n".join(f"• {q}" for q in qs)
+    if state.unknown_place:
+        text = unknown_note(state.unknown_place) + "\n\n" + text
     return reply(text, [], chips_)
+
+
+def unknown_note(place: dict) -> str:
+    like = ", ".join(PREF_LABELS.get(p, p) for p in place["prefs"] if p in PREF_LABELS)
+    return (f"❗ Направления «{place['name']}» в нашем каталоге пока нет, поэтому забронировать туда поездку не смогу. "
+            + (f"Подберу то, что ближе всего по духу: {like}." if like else "Подберу ближайшие по смыслу варианты."))
 
 
 def understood_line(state: SessionState) -> str:
@@ -724,6 +763,9 @@ def do_destinations(state: SessionState, turn: Turn, reason: str | None = None) 
         turn.tool("get_weather", {"dest": o["name"], "month": o["dates"]["text"]},
                   deg(o['weather']['air']) + (f", море +{o['weather']['sea']}°" if o["weather"]["sea"] is not None else ""))
     lead = opts[0]
+    if state.unknown_place:
+        reason = unknown_note(state.unknown_place) + (" " + reason if reason else "")
+        state.unknown_place = None
     text = (reason + "\n\n" if reason else "") + (understood_line(state) + "\n\n" if understood_line(state) else "")
     text += (f"Подобрал {len(opts)} {'направления' if len(opts) < 5 else 'направлений'} — от лучшего совпадения. "
              "Цена «под ключ»: дорога, отель и трансфер на всех, даты — самые выгодные в выбранном периоде.") \
@@ -782,7 +824,7 @@ def do_plan(state: SessionState, turn: Turn, replan: bool = False, reason: str |
     state.cart = None
     mark_reco(state)
     update_profile(state)
-    diff = planner.plan_diff(old, plan) if replan else []
+    diff = planner.plan_diff(old, plan) if replan and not SILENT.get() else []
     if replan:
         state.replans += 1
         store.log_event(state.id, state.user_id, "replan", {"diff": diff})
@@ -1140,7 +1182,7 @@ def present_cart(state: SessionState, note: str | None = None) -> dict:
     errors = [i for i in view["issues"] if i["level"] == "error"]
     warns = [i for i in view["issues"] if i["level"] == "warn"]
     lines = []
-    if note:
+    if note and not SILENT.get():
         lines.append(note)
     lines.append(f"Собрал поездку в корзину: **{view['dest_name']}, {view['dates_text']}**, итого **{rub(view['total'])}**.")
     lines.append("Прошёлся по состыковкам ещё раз: " + ("ошибок нет" if not errors else f"⚠️ {len(errors)} ошибки") +

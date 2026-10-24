@@ -63,3 +63,27 @@ def test_dog_on_banned_destination_replans():
     out = run(s, "с нами едет собака")
     assert s.req.destination is None and s.stage == "destinations"
     assert "запрещён" in out["text"]
+
+
+def test_unknown_place_is_honest_and_similar():
+    store.reset_for_tests()
+    s = SessionState(user_id="t-ant")
+    out = run(s, "Хочу поехать в антарктиду летом с детьми", "5 и 9")
+    assert "нет" in out["text"] and "Антарктида" in out["text"]
+    ids = [d["dest_id"] for d in out["blocks"][0]["items"]]
+    assert ids[0] in ("kamchatka", "murmansk", "baikal", "altai") and "sochi" not in ids[:3]
+
+
+def test_silent_priority_switch_has_no_chat_message():
+    store.reset_for_tests()
+    s = SessionState(user_id="t-sil")
+    run(s, "Хургада в декабре на неделю вдвоём")
+    hist = len(s.history)
+    out = agent.handle(s, None, {"type": "set", "key": "priority", "value": "price", "silent": True})
+    assert out["silent"] and s.req.priority == "price" and s.stage == "bundles"
+    assert not any(b["type"] == "diff" for b in out["blocks"])
+    assert "Учёл" not in out["text"] and len(s.history) == hist
+    # до начала подбора переключение просто запоминается
+    s2 = SessionState(user_id="t-sil2")
+    out = agent.handle(s2, None, {"type": "set", "key": "priority", "value": "comfort", "silent": True})
+    assert out["text"] == "" and s2.req.priority == "comfort" and s2.stage == "start"

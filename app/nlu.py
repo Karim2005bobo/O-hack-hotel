@@ -9,7 +9,7 @@ import re
 from calendar import monthrange
 from datetime import date, timedelta
 
-from .data.destinations import COUNTRY_ALIASES, DESTINATIONS
+from .data.destinations import COUNTRY_ALIASES, DESTINATIONS, UNKNOWN_PLACES
 from .data.geo import ORIGINS
 from .state import today
 
@@ -443,6 +443,12 @@ def parse_places(t: str, out: dict) -> None:
             out["destination"] = dests[0]
         else:
             out["country"] = c
+    if "destination" not in out and "country" not in out:
+        for pat, name, prefs, similar in UNKNOWN_PLACES:
+            m = re.search(r"(?<![а-я])(?:" + pat + ")", t)
+            if m and not in_origin(m.start()):
+                out["_unknown_place"] = {"name": name, "prefs": list(prefs), "similar": list(similar), "word": m.group(0)}
+                break
     if re.search(r"куда[- ]?(нибудь|угодно|то)|не знаю куда|посоветуй\w* (куда|направлен)|предлож\w+ (куда|направлен|вариант)|"
                  r"любое направлен|без разницы куда|куда поехать|куда полететь|куда съездить|куда махнуть", t):
         out["_open_destination"] = True

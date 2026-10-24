@@ -35,6 +35,8 @@ class TripRequest(BaseModel):
     destination: str | None = None
     country: str | None = None
     avoid: list[str] = Field(default_factory=list)
+    similar_to: list[str] = Field(default_factory=list)  # аналоги места, которого нет в каталоге
+    similar_label: str | None = None
     date_from: str | None = None
     date_to: str | None = None
     month: int | None = None
@@ -102,4 +104,5 @@ class SessionState(BaseModel):
     turns: int = 0
     replans: int = 0
     memory_applied: list[str] = Field(default_factory=list)
+    unknown_place: dict | None = None  # место вне каталога, о котором нужно честно сказать
     awaiting: str | None = None  # что агент ждёт от пользователя (например, travelers_names)
