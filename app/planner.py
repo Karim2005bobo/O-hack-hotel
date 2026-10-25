@@ -13,10 +13,11 @@ from .data.geo import ORIGIN_BY_CODE, ORIGIN_SAME_DEST, flight_minutes, haversin
 from .state import TripRequest, today
 
 WEIGHTS = {
-    "price": {"price": 0.5, "hotel": 0.25, "transport": 0.18, "transfer": 0.07},
-    "balance": {"price": 0.34, "hotel": 0.36, "transport": 0.22, "transfer": 0.08},
-    "comfort": {"price": 0.15, "hotel": 0.5, "transport": 0.25, "transfer": 0.1},
-    "time": {"price": 0.25, "hotel": 0.25, "transport": 0.42, "transfer": 0.08},
+    # price — деньги, hotel — отель под вас, transport — удобство рейсов, time — время «от вылета до двери отеля»
+    "price": {"price": 0.65, "hotel": 0.17, "transport": 0.1, "time": 0.08},
+    "balance": {"price": 0.35, "hotel": 0.35, "transport": 0.18, "time": 0.12},
+    "comfort": {"price": 0.08, "hotel": 0.55, "transport": 0.25, "time": 0.12},
+    "time": {"price": 0.12, "hotel": 0.18, "transport": 0.15, "time": 0.55},
 }
 
 
@@ -139,6 +140,9 @@ def score_transport(t: dict, req: TripRequest, all_opts: list[dict]) -> tuple[fl
         if not t["baggage_included"]:
             cons.append(f"тариф без багажа: докупил багаж (+{rub(t['bag_fee'])} за место)")
             s -= 0.04
+        if req.priority == "comfort" and t["lowcost"]:
+            s -= 0.45
+            cons.append("лоукост: тесные кресла, всё за доплату")
         if req.max_flight_h and t["duration_min"] > req.max_flight_h * 60:
             s -= 0.45
             cons.append(f"в пути {hours(t['duration_min'])} — больше вашего лимита {req.max_flight_h:g} ч")
@@ -306,8 +310,10 @@ def choose_transfer(opts: list[dict], req: TripRequest) -> dict | None:
             p *= 3
         if req.pets and o["kind"] in ("shuttle", "public"):
             p *= 3
-        if req.priority == "comfort" and o["kind"] == "private":
-            p *= 0.4
+        if req.priority == "comfort":
+            p *= 0.4 if o["kind"] in ("private", "seaplane") else 4 if o["kind"] in ("shuttle", "public") else 1
+        if req.priority == "time":
+            p *= 1 + o["duration_min"] / 30
         if req.priority in ("balance", "time") and o["kind"] in ("shuttle", "public"):
             p *= 1.6 if req.has_kids else 1.15
         if o["kind"] == "seaplane" and req.priority != "price":
@@ -732,11 +738,15 @@ def build_plan(req: TripRequest, dest_id: str, pinned: dict | None = None, prev:
 
     top_out = pick(sorted(outs, key=lambda t: -t["fit"]), "out_id")[:4]
     top_out += [t for t in sorted(outs, key=lambda t: t["total_price"])[:2] if t not in top_out]
+    top_out += [t for t in sorted(outs, key=lambda t: t["duration_min"])[:1] if t not in top_out]
     top_back = pick(sorted(backs, key=lambda t: -t["fit"]), "back_id")[:4]
     top_back += [t for t in sorted(backs, key=lambda t: t["total_price"])[:2] if t not in top_back]
+    top_back += [t for t in sorted(backs, key=lambda t: t["duration_min"])[:1] if t not in top_back]
     top_hotels = pick(hotels, "hotel_id")[:7]
-    cheap_h = sorted(hotels, key=lambda h: h["base_price"])[:2]
-    top_hotels += [h for h in cheap_h if h not in top_hotels]
+    extra_h = sorted(hotels, key=lambda h: h["base_price"])[:2]  # самые дешёвые
+    extra_h += sorted(hotels, key=lambda h: (-h["stars"], -h["rating"]))[:2]  # самые классные
+    extra_h += sorted(hotels, key=lambda h: h["airport_km"])[:2]  # ближе всего к аэропорту
+    top_hotels += [h for h in extra_h if h not in top_hotels]
 
     prev_ids = {}
     if prev and prev.get("bundles"):
@@ -759,6 +769,11 @@ def build_plan(req: TripRequest, dest_id: str, pinned: dict | None = None, prev:
     trace.append({"tool": "search_transfers", "args": {"dest": dest.name}, "result": "подобраны трансферы для каждого отеля"})
 
     cheapest = min(c["total"] for c in combos)
+    for c in combos:
+        c["door_min"] = (c["out"]["duration_min"] + c["back"]["duration_min"] +
+                         (c["transfer_in"] or {"duration_min": 60})["duration_min"] +
+                         (c["transfer_out"] or {"duration_min": 60})["duration_min"])
+    fastest_door = min(c["door_min"] for c in combos)
     w = WEIGHTS.get(req.priority, WEIGHTS["balance"])
     for c in combos:
         price_s = cheapest / c["total"]
@@ -766,9 +781,17 @@ def build_plan(req: TripRequest, dest_id: str, pinned: dict | None = None, prev:
             price_s -= min(1.0, (c["total"] / req.budget - 1) * 2.5)
         tr_s = (c["out"]["fit"] + c["back"]["fit"]) / 2
         tf_s = c["transfer_fit"]
+        time_s = fastest_door / c["door_min"]
+        h = c["hotel"]
+        hotel_s = h["fit"]
+        if req.priority == "comfort":  # комфорт — это ещё и класс отеля, гибкий тариф и встреча в аэропорту
+            hotel_s += (h["stars"] - 3) * 0.12 + (h["rating"] - 8) * 0.08 + (0.08 if c["stay"]["rate"]["refundable"] else 0)
+            tr_s += 0.1 * tf_s
+        if req.priority == "time":
+            time_s -= min(0.3, h["airport_km"] / 300)
         pen = sum(0.5 if i["level"] == "error" else 0.04 if i["level"] == "warn" else 0 for i in c["issues"])
-        c["utility"] = round(w["price"] * price_s + w["hotel"] * c["hotel"]["fit"] + w["transport"] * tr_s +
-                             w["transfer"] * tf_s - pen + c.pop("_sticky", 0), 4)
+        c["utility"] = round(w["price"] * price_s + w["hotel"] * hotel_s + w["transport"] * tr_s +
+                             w["time"] * time_s - pen + c.pop("_sticky", 0), 4)
         c["quality"] = c["hotel"]["fit"] * 0.6 + tr_s * 0.3 + tf_s * 0.1 - pen
         c["blocking"] = any(i["level"] == "error" for i in c["issues"])
 

@@ -97,10 +97,18 @@
     const idx = +old.dataset.feed;
     const el = buildAgent(m, idx);
     const wasLast = !old.nextElementSibling;
+    // сохраняем раскрытые блоки («Сравнить отели», «Сравнить маршруты», проверки) — по порядку и по заголовку
+    const openNow = [...old.querySelectorAll("details")].map((d) => ({ open: d.open, title: summaryKey(d) }));
+    const fresh = [...el.querySelectorAll("details")];
+    fresh.forEach((d, i) => {
+      const same = openNow.find((x) => x.title === summaryKey(d)) || openNow[i];
+      if (same && same.open) d.open = true;
+    });
     old.replaceWith(el);
     if (feed[idx]) { feed[idx] = { role: "agent", m }; persist(); }
     if (wasLast) renderChips(m.chips || []);
   }
+  const summaryKey = (d) => ((d.querySelector("summary") || {}).textContent || "").replace(/\(\d+\)/, "").trim();
   async function tweak(action) {
     if (busy) return;
     busy = true; document.body.classList.add("updating");
@@ -229,7 +237,7 @@
     const hd = h(`<details><summary>Сравнить отели (${p.hotels.length})</summary></details>`);
     hd.appendChild(hotelsTable(p.hotels, p.excluded_hotels, true));
     wrap.appendChild(hd);
-    const fd = h(`<details><summary>Сравнить рейсы и поезда</summary></details>`);
+    const fd = h(`<details><summary>Сравнить маршруты</summary></details>`);
     fd.appendChild(flightsBlock(p.flights_out, p.flights_back, true));
     wrap.appendChild(fd);
     return wrap;
@@ -277,7 +285,7 @@
   }
 
   function weightsBlock(w) {
-    const parts = [["Цена", w.price, "#0a7cff"], ["Отель под вас", w.hotel, "#16a06b"], ["Дорога", w.transport, "#6b4de6"], ["Трансфер", w.transfer, "#c77800"]];
+    const parts = [["Цена", w.price, "#0a7cff"], ["Отель под вас", w.hotel, "#16a06b"], ["Удобство рейсов", w.transport, "#6b4de6"], ["Время в пути", w.time, "#c77800"]];
     return h(`<div class="weights">${parts.map(([l, v, c]) => `<div style="width:${v * 100}%;background:${c}">${v >= 0.12 ? `${l} ${Math.round(v * 100)}%` : ""}</div>`).join("")}</div>`);
   }
 

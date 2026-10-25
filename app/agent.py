@@ -475,6 +475,11 @@ def route(state: SessionState, upd: dict, intent: str | None, message: str | Non
         if not changed:
             return reply("")
         if state.stage == "bundles" and state.plan and state.req.destination:
+            if "priority" in changed:
+                # новый приоритет — подбираем заново, не держась за прежний отель и рейсы
+                for k in ("hotel_id", "out_id", "back_id", "rate"):
+                    state.pinned.pop(k, None)
+                return do_plan(state, turn, replan=True, sticky=False)
             return do_plan(state, turn, replan=True)
         if state.stage == "destinations" and state.dest_options:
             return do_destinations(state, turn)
@@ -852,7 +857,7 @@ def mark_reco(state: SessionState) -> None:
 
 # ====================================================================== план
 
-def do_plan(state: SessionState, turn: Turn, replan: bool = False, reason: str | None = None) -> dict:
+def do_plan(state: SessionState, turn: Turn, replan: bool = False, reason: str | None = None, sticky: bool = True) -> dict:
     r = state.req
     dest = DEST_BY_ID[r.destination]
     missing = missing_slots(state)
@@ -874,7 +879,7 @@ def do_plan(state: SessionState, turn: Turn, replan: bool = False, reason: str |
     if old and old.get("dest_id") != r.destination:
         state.pinned = {}
     turn.think(("Пересобираю: " if replan else "Собираю поездку ") + f"{dest.name} — транспорт, отели, трансферы, состыковки")
-    plan = planner.build_plan(r, r.destination, state.pinned, old if replan else None)
+    plan = planner.build_plan(r, r.destination, state.pinned, old if replan and sticky else None)
     for t in plan.get("trace", []):
         turn.tool(t["tool"], t["args"], t["result"])
     if plan.get("error"):
@@ -999,14 +1004,14 @@ def show_hotels(state: SessionState) -> dict:
     if plan.get("excluded_hotels"):
         text += "\n\nЧестно отсеял: " + "; ".join(f"{h['name']} — {h['reason']}" for h in plan["excluded_hotels"][:3]) + "."
     return reply(text, [{"type": "hotels", "rows": rows, "excluded": plan.get("excluded_hotels", [])}],
-                 [chip("Покажи рейсы", action={"type": "show_flights"}), chip("Вернуться к вариантам", action={"type": "back_to_plan"})])
+                 [chip("Сравнить маршруты", action={"type": "show_flights"}), chip("Вернуться к вариантам", action={"type": "back_to_plan"})])
 
 
 def show_flights(state: SessionState) -> dict:
     plan = state.plan
     return reply("Варианты дороги туда и обратно. Цена — на всех, с багажом. Выберите — пересоберу план вокруг рейса.",
                  [{"type": "flights", "out": plan["flights_out"], "back": plan["flights_back"]}],
-                 [chip("Покажи отели", action={"type": "show_hotels"}), chip("Вернуться к вариантам", action={"type": "back_to_plan"})])
+                 [chip("Сравнить отели", action={"type": "show_hotels"}), chip("Вернуться к вариантам", action={"type": "back_to_plan"})])
 
 
 # ====================================================================== изменения условий
@@ -1098,7 +1103,7 @@ def do_why(state: SessionState, turn: Turn) -> dict:
         h = b["hotel"]
         lines = [f"**Почему «{b['title']}»: {h['name']}** ({h['stars']}★, {h['area']}).",
                  f"Я сравнивал варианты по формуле: цена {int(w['price'] * 100)}% · отель под вас {int(w['hotel'] * 100)}% · "
-                 f"дорога {int(w['transport'] * 100)}% · трансфер {int(w['transfer'] * 100)}%. "
+                 f"удобство рейсов {int(w['transport'] * 100)}% · время в пути {int(w['time'] * 100)}%. "
                  f"Режим «{PRIORITY_LABELS[r.priority]}» — переключите, если важнее другое."]
         lines.append("\n**Плюсы для вас:** " + "; ".join(b["explain"]["why"]) + ".")
         if b["explain"]["tradeoffs"]:
