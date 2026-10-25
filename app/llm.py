@@ -250,3 +250,25 @@ def place_card(query: str) -> dict | None:
         log.warning("place_card: не JSON")
         return None
 
+
+SUGGEST_PROMPT = """Ты — эксперт по путешествиям. Турист из России (вылет: {origin}) ищет поездку: {summary}.
+Предложи 5 конкретных мест в мире (город, курорт или остров — не страну), которые лучше всего подходят под запрос
+в эти даты, включая неочевидные. Учитывай сезон и погоду, визы и прямые рейсы для граждан РФ, бюджет и состав.
+Верни ТОЛЬКО JSON: {{"places": ["Название по-русски", ...]}}"""
+
+
+def suggest_places(summary: str, origin: str) -> list[str]:
+    """Идеи направлений со всего мира для запроса без конкретного места."""
+    if not enabled():
+        return []
+    raw = _chat([{"role": "system", "content": "Отвечай только валидным JSON."},
+                 {"role": "user", "content": SUGGEST_PROMPT.format(summary=summary[:400], origin=origin)}], max_tokens=300)
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return []
+    try:
+        places = json.loads(m.group(0)).get("places", [])
+    except (json.JSONDecodeError, AttributeError):
+        return []
+    return [str(p).strip()[:60] for p in places if isinstance(p, str) and p.strip()][:5]
+

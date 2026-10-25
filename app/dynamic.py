@@ -291,3 +291,18 @@ def origin(query: str) -> str | None:
     store.save_place("id:" + code, card)
     ORIGIN_BY_CODE[code] = o
     return code
+
+
+# ---------------------------------------------------------------- идеи направлений от LLM
+
+def suggest(summary: str, origin_name: str) -> tuple[list[str], list[str]]:
+    """LLM предлагает места под запрос → (id направлений, названия). Кэшируется по тексту запроса."""
+    key = "s:" + norm_key(origin_name + "|" + summary)
+    cached = store.get_place(key)
+    names = cached.get("places", []) if cached else llm.suggest_places(summary, origin_name)
+    if not names:
+        return [], []
+    store.save_place(key, {"places": names})
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        ids = [i for i in ex.map(place, names) if i]
+    return list(dict.fromkeys(ids)), names

@@ -478,7 +478,9 @@ def parse_places(t: str, out: dict) -> None:
         for pat, name, prefs, similar in UNKNOWN_PLACES:
             m = re.search(r"(?<![а-я])(?:" + pat + ")", t)
             if m and not in_origin(m.start()):
-                out["_unknown_place"] = {"name": name, "prefs": list(prefs), "similar": list(similar), "word": m.group(0)}
+                word = re.match(r"[а-я-]+", t[m.start():]).group(0)
+                out["_unknown_place"] = {"name": name, "prefs": list(prefs), "similar": list(similar), "word": m.group(0),
+                                         "query": word.capitalize()}
                 break
     if re.search(r"куда[- ]?(нибудь|угодно|то)|не знаю куда|посоветуй\w* (куда|направлен)|предлож\w+ (куда|направлен|вариант)|"
                  r"любое направлен|без разницы куда|куда поехать|куда полететь|куда съездить|куда махнуть", t):

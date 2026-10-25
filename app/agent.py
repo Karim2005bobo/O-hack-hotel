@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextvars
 import random
+import re
 import time
 from datetime import date, datetime, timedelta
 
@@ -159,9 +160,25 @@ def welcome(state: SessionState) -> dict:
 
 # ====================================================================== разбор
 
-def merge_updates(rule: dict, llm_upd: dict | None) -> dict:
+def mentioned(dest_id: str, text: str) -> bool:
+    """Упомянуто ли направление каталога в тексте (защита от «Антарктида» → «Анталья» у LLM)."""
+    d = DEST_BY_ID.get(dest_id)
+    if d is None:
+        return False
+    t = nlu.norm(text)
+    stems = [a.strip() for a in d.aliases if len(a.strip()) >= 3] + [nlu.norm(d.name)[:5]]
+    return any(re.search(r"(?<![а-я])" + re.escape(st), t) for st in stems)
+
+
+def merge_updates(rule: dict, llm_upd: dict | None, text: str = "") -> dict:
     if not llm_upd:
         return rule
+    llm_upd = dict(llm_upd)
+    dest = llm_upd.get("destination")
+    rules_saw_place = bool(rule.get("destination") or rule.get("_unknown_place") or rule.get("country"))
+    if dest and dest != rule.get("destination") and text and rules_saw_place and not mentioned(dest, text):
+        # в сообщении есть другое место (например, «Антарктида»), а LLM подставила похожее из каталога («Анталья»)
+        llm_upd.pop("destination")
     out = dict(rule)
     rule_dates = any(k in rule for k in ("date_from", "date_to"))
     for k, v in llm_upd.items():
@@ -239,6 +256,9 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
         state.unknown_place = unknown
         upd["prefs"] = sorted(set(upd.get("prefs", [])) | set(unknown["prefs"]))
         r.similar_to, r.similar_label = list(unknown.get("similar", [])), unknown["name"]
+        if r.destination:  # пользователь назвал новое место — прежнее направление больше не актуально
+            r.destination, r.country, r.candidates = None, None, []
+            changed.add("destination")
         turn.think(f"«{unknown['name']}» нет в каталоге — подберу похожее по духу: "
                    + ", ".join(PREF_LABELS.get(p, p) for p in unknown["prefs"]))
     elif "destination" in upd:
@@ -411,7 +431,7 @@ def handle(state: SessionState, message: str | None = None, action: dict | None 
         llm_upd = llm.extract(message or "", state.stage, context_text(state), today().isoformat()) if message else None
         if llm_upd is not None:
             turn.tool("llm_extract", {"model": "LLM"}, f"{len(llm_upd)} полей")
-        upd = merge_updates(upd, llm_upd)
+        upd = merge_updates(upd, llm_upd, message or "")
         found = {k: v for k, v in upd.items() if not k.startswith("_")}
         if found:
             turn.tool("parse_request", {"text": (message or "")[:80]}, describe_updates(found))
@@ -850,7 +870,12 @@ def do_destinations(state: SessionState, turn: Turn, reason: str | None = None) 
     profile = store.get_profile(state.user_id)
     visited = [t["dest_id"] for t in profile.get("trips", [])]
     t0 = time.time()
-    opts, excluded = planner.rank_destinations(r, visited)
+    extra = []
+    if llm.enabled() and not r.candidates and not r.similar_to:
+        extra, names = dynamic.suggest(request_summary(r), ORIGIN_BY_CODE[r.origin or "MOW"].name)
+        if names:
+            turn.tool("llm_suggest_places", {"запрос": request_summary(r)[:80]}, "идеи ИИ: " + ", ".join(names))
+    opts, excluded = planner.rank_destinations(r, visited, extra=extra)
     turn.tool("search_destinations", {"month": r.month or (r.date_from or "")[:7], "prefs": r.prefs, "origin": r.origin,
                                       "max_flight_h": r.max_flight_h, "budget": r.budget},
               f"{len(opts)} направлений, исключено {len(excluded)} ({int((time.time() - t0) * 1000)} мс)")
@@ -886,6 +911,40 @@ def do_destinations(state: SessionState, turn: Turn, reason: str | None = None) 
     chips_.append(chip("Почему такой выбор?", action={"type": "why"}))
     store.log_event(state.id, state.user_id, "destinations", {"n": len(opts)})
     return reply(text, blocks, chips_)
+
+
+def request_summary(r: TripRequest) -> str:
+    """Запрос человеческим языком — для идей направлений от LLM."""
+    bits = []
+    if r.date_from:
+        d1 = date.fromisoformat(r.date_from)
+        bits.append("даты " + (date_range_text(d1, date.fromisoformat(r.date_to)) if r.date_to else f"с {ddmm(d1)} {d1.year}"))
+    elif r.month:
+        bits.append(f"в {MONTH_LOC[r.month - 1]} {r.year or ''}".strip())
+    if r.nights:
+        bits.append(f"{r.nights} {plural(r.nights, 'ночь', 'ночи', 'ночей')}")
+    bits.append(f"{r.adults or 2} взрослых" + (f", дети {', '.join(map(str, r.children_ages))} лет" if r.children_ages else ""))
+    if r.prefs:
+        bits.append("хотят: " + ", ".join(PREF_LABELS.get(p, p) for p in r.prefs if p in PREF_LABELS))
+    if r.budget:
+        bits.append(f"бюджет до {rub(r.budget)} на всех")
+    elif r.budget_level == "low":
+        bits.append("недорого")
+    elif r.budget_level == "high":
+        bits.append("бюджет не ограничен")
+    if r.max_flight_h:
+        bits.append(f"в пути не больше {r.max_flight_h:g} ч")
+    if r.pets:
+        bits.append("едут с питомцем")
+    if r.visa_free:
+        bits.append("без визы")
+    if r.transport == "train":
+        bits.append("только поездом")
+    if r.country:
+        bits.append(f"страна: {r.country}")
+    if r.avoid:
+        bits.append("кроме: " + ", ".join(r.avoid))
+    return "; ".join(bits)
 
 
 def mark_reco(state: SessionState) -> None:

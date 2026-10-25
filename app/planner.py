@@ -383,14 +383,18 @@ def weather(dest: Destination, month: int) -> dict:
     return {"air": dest.air[i], "sea": dest.sea[i] if dest.sea else None, "rain_days": dest.rain[i]}
 
 
-def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit: int = 4) -> tuple[list[dict], list[dict]]:
+def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit: int = 4,
+                      extra: list[str] | None = None) -> tuple[list[dict], list[dict]]:
     visited = visited or []
     excluded: list[dict] = []
     scored: list[dict] = []
     month = req.month or (date.fromisoformat(req.date_from).month if req.date_from else ((today().month % 12) + 1))
     prefs = set(req.prefs)
     origin = req.origin or "MOW"
-    pool = [DEST_BY_ID[i] for i in req.candidates if i in DEST_BY_ID] if req.candidates else DESTINATIONS
+    pool = [DEST_BY_ID[i] for i in req.candidates if i in DEST_BY_ID] if req.candidates else list(DESTINATIONS)
+    if not req.candidates and extra:  # места, которые предложила LLM, соревнуются с каталогом на равных
+        known = {d.id for d in pool}
+        pool += [DEST_BY_ID[i] for i in extra if i not in known and i in DEST_BY_ID]
     for d in pool:
         if ORIGIN_SAME_DEST.get(origin) == d.id or d.id in req.avoid or d.country in req.avoid:
             continue
@@ -540,6 +544,9 @@ def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit:
             s += 0.4
         if d.id in visited:
             s -= 0.25
+        if extra and d.id in extra and d.source == "llm":
+            s += 0.5
+            why.append("предложил ИИ под ваш запрос")
         if d.id in req.similar_to:
             s += 2.2 - 0.2 * req.similar_to.index(d.id)
             why.insert(0, f"ближе всего к «{req.similar_label}»" if req.similar_label else "похоже на то, что вы искали")
