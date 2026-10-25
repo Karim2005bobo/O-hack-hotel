@@ -1026,8 +1026,6 @@ def present_plan(state: SessionState, turn: Turn, diff: list[str] | None, intro:
     lines.append(f"Проверил состыковки: {'всё сходится' if not errors and not warns else f'{len(warns)} замечания, см. в карточке'}.")
     for n in plan.get("notes", []):
         lines.append("ℹ️ " + n)
-    if DEST_BY_ID[plan["dest_id"]].source == "llm":
-        lines.append("ℹ️ Сведения о месте (климат, районы, что посмотреть) подготовил ИИ — это оценка, цены и состыковки посчитаны агентом.")
     if r.meal and best["stay"]["meal"] != r.meal and not (r.meal == "AI" and best["stay"]["meal"] == "UAI"):
         lines.append(f"ℹ️ Тарифов «{inv.MEAL_NAMES[r.meal]}» в подходящих отелях нет — здесь работают по системе "
                      f"«{best['stay']['meal_name']}», это уже включает {inv.MEAL_NAMES[r.meal]}.")
