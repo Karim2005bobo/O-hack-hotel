@@ -39,22 +39,37 @@ def model_name() -> str | None:
     return os.getenv("LLM_MODEL") if enabled() else None
 
 
+def is_reasoning_model(model: str) -> bool:
+    m = model.lower()
+    return any(x in m for x in ("gpt-oss", "deepseek-r1", "reasoner", "qwq", ":thinking", "o1", "o3", "o4-mini", "-r1"))
+
+
 def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -> str | None:
     base = os.getenv("LLM_BASE_URL", "").rstrip("/")
     model = os.getenv("LLM_MODEL", "")
     timeout = float(os.getenv("LLM_TIMEOUT", "20"))
+    reasoning = is_reasoning_model(model)
+    if reasoning:
+        max_tokens *= 4  # рассуждающие модели тратят часть лимита на «мысли» — даём запас
     body = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
+    if reasoning and "openrouter.ai" in base:
+        body["reasoning"] = {"effort": "low", "exclude": True}
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     headers = {"Authorization": f"Bearer {os.getenv('LLM_API_KEY')}", "Content-Type": "application/json"}
     try:
         with httpx.Client(timeout=timeout) as c:
             r = c.post(f"{base}/chat/completions", json=body, headers=headers)
-            if r.status_code == 400 and json_mode:  # сервер не поддерживает response_format
-                body.pop("response_format")
+            if r.status_code == 400 and (json_mode or "reasoning" in body):  # сервер не знает доп. параметры
+                body.pop("response_format", None)
+                body.pop("reasoning", None)
                 r = c.post(f"{base}/chat/completions", json=body, headers=headers)
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            content = r.json()["choices"][0]["message"].get("content") or ""
+            if not content.strip():
+                log.warning("LLM вернула пустой ответ (возможно, не хватило max_tokens)")
+                return None
+            return content
     except Exception as e:  # noqa: BLE001 — сеть/формат: тихо откатываемся на правила
         log.warning("LLM недоступна: %s", e)
         return None
