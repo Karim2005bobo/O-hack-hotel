@@ -1846,15 +1846,17 @@ def do_apply_form(state: SessionState, f: dict, turn: Turn) -> dict:
     ages = [int(a) for a in re.findall(r"\d{1,2}", text("children")) if int(a) < 18]
     upd["children_ages"], upd["children_pending"] = ages, 0
     r.assumptions.pop("children", None)
-    # бюджет и питомец
-    budget = re.sub(r"[^\d]", "", text("budget"))
-    r.budget = int(budget) if budget else None
-    r.pets = text("pets") or None
-    # пожелания — заменяют прежние
-    for k, v in TripRequest().model_dump().items():
-        if k in WISH_KEYS:
-            setattr(r, k, v)
-    r.budget_level = None
+    # бюджет, питомец и пожелания — только если поля есть в форме (иначе сохраняем то, что понято из диалога)
+    if "budget" in f:
+        budget = re.sub(r"[^\d]", "", text("budget"))
+        r.budget = int(budget) if budget else None
+    if "pets" in f:
+        r.pets = text("pets") or None
+    if "wishes" in f:  # пожелания из формы заменяют прежние
+        for k, v in TripRequest().model_dump().items():
+            if k in WISH_KEYS:
+                setattr(r, k, v)
+        r.budget_level = None
     if text("wishes"):
         w = nlu.parse(text("wishes"))
         if llm.enabled():

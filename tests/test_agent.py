@@ -143,21 +143,22 @@ def test_long_trips_allowed_and_counted():
 def test_trip_form_apply():
     store.reset_for_tests()
     s = SessionState(user_id="t-form")
-    form = {"origin": "Казань", "destination": "", "month": "2", "nights": "7", "adults": "2", "children": "6",
-            "budget": "300 000", "pets": "", "wishes": "тёплое море, всё включено, без визы"}
+    agent.handle(s, "тёплое море, всё включено, без визы, бюджет 300 000")
+    form = {"origin": "Казань", "destination": "", "month": "2", "nights": "7", "adults": "2", "children": "6"}
     out = agent.handle(s, None, {"type": "apply_form", "values": form})
-    assert s.stage == "destinations" and s.req.origin == "KZN" and s.req.children_ages == [6]
+    assert s.stage == "destinations" and s.req.origin == "KZN" and s.req.children_ages == [6] and s.req.month == 2
+    # бюджет и пожелания из диалога сохраняются — в форме их нет
     assert s.req.budget == 300000 and s.req.meal == "AI" and s.req.visa_free and "sea" in s.req.prefs
     assert out["blocks"][0]["type"] == "destinations"
     # конкретное место → сразу пакеты; потом меняем только детей → пересборка с диффом
-    form = dict(agent.summary(s)["form"], destination="Шарм-эш-Шейх")
+    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"destination": "Шарм-эш-Шейх"}
     agent.handle(s, None, {"type": "apply_form", "values": form})
     assert s.stage == "bundles" and s.req.destination == "sharm"
-    form = dict(agent.summary(s)["form"], children="6, 10")
+    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"children": "6, 10"}
     out = agent.handle(s, None, {"type": "apply_form", "values": form})
     assert s.req.children_ages == [6, 10] and any(b["type"] == "diff" for b in out["blocks"])
     assert out["text"].startswith("Применил ваши параметры: состав")
-    # пустое «Куда» и пустые пожелания — снова подбор, без старых условий
-    form = dict(agent.summary(s)["form"], destination="", wishes="")
+    # пустое «Куда» — снова подбор направлений
+    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"destination": ""}
     agent.handle(s, None, {"type": "apply_form", "values": form})
-    assert s.req.destination is None and s.req.meal is None and s.stage == "destinations"
+    assert s.req.destination is None and s.stage == "destinations" and s.req.meal == "AI"

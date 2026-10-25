@@ -377,7 +377,6 @@
   // ------------------------------------------------------------------ панель
   // ------------------------------------------------------------------ форма «Что я понял»
   let formDirty = false;
-  const fmtBudget = (v) => (v ? String(v).replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, " ") : "");
   function fillForm(f) {
     if (!f || formDirty) return;
     const form = $("#tripForm");
@@ -385,8 +384,7 @@
     set("origin", f.origin); set("destination", f.destination);
     set("date_from", f.date_from); set("date_to", f.date_to);
     set("month", f.date_from ? "" : f.month); set("nights", f.date_to ? "" : f.nights);
-    set("adults", f.adults); set("children", f.children); set("budget", fmtBudget(f.budget));
-    set("pets", f.pets); set("wishes", f.wishes);
+    set("adults", f.adults); set("children", f.children);
   }
   function formSummary(v) {
     const bits = [];
@@ -395,8 +393,6 @@
     if (v.date_from) bits.push(`${dm(v.date_from)}${v.date_to ? " – " + dm(v.date_to) : ""}`);
     else if (v.month) bits.push($("#tripForm").elements.month.selectedOptions[0].textContent);
     if (v.adults) bits.push(`${v.adults} взр.` + (v.children ? `, дети ${v.children}` : ""));
-    if (v.budget) bits.push(`до ${fmtBudget(v.budget)} ₽`);
-    if (v.wishes) bits.push(v.wishes);
     return "Мои параметры: " + bits.join("; ");
   }
   function initForm() {
