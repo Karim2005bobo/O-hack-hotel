@@ -19,7 +19,21 @@ docker compose up --build
 
 Сборка занимает ~1–2 минуты (образ ~210 МБ). Никаких ручных доустановок, внешних API и ключей не нужно: без LLM-ключа агент полностью работает на встроенном разборе русского языка. С ключом (любой OpenAI-совместимый API) понимание свободного текста становится ещё устойчивее.
 
-Без Docker: `pip install -r requirements.txt`, затем `python -m uvicorn app.main:app --port 8080`. Файл `.env` из корня проекта подхватывается и в этом режиме.
+### Запуск с LLM: ключ вводится в терминале
+
+Ключ, адрес API и модель в коде не прописаны — их вводят при запуске:
+
+```bash
+pip install -r requirements.txt
+python run.py
+# Ключ API (ввод скрыт; Enter — запуск без LLM): ********
+# Адрес API, например https://openrouter.ai/api/v1: https://openrouter.ai/api/v1
+# Модель, например meta-llama/llama-3.3-70b-instruct:free: meta-llama/llama-3.3-70b-instruct:free
+# Проверяю подключение… ✓ работает
+# Открывайте http://localhost:8080
+```
+
+Ключ живёт только в памяти запущенного процесса и нигде не сохраняется. Перед запуском `run.py` делает один пробный запрос и понятно сообщает, если ключ не подходит, кончился баланс или неверно указана модель. В Docker то же самое: `docker compose run --rm --service-ports app python run.py --host 0.0.0.0`. Обычный `docker compose up --build` запускает агента без LLM, без вопросов.
 
 ## Зависимости и переменные окружения
 
@@ -32,9 +46,9 @@ docker compose up --build
 | Переменная | По умолчанию | Назначение |
 |---|---|---|
 | `APP_PORT` | `8080` | порт на хосте (внутри контейнера всегда 8080) |
-| `LLM_API_KEY` | пусто | ключ OpenAI-совместимого API; пусто — работа только на правилах |
-| `LLM_BASE_URL` | `https://api.deepseek.com/v1` (в `.env.example`) | любой совместимый endpoint: DeepSeek, OpenAI, vLLM, Ollama `http://host.docker.internal:11434/v1`, шлюзы к YandexGPT/GigaChat |
-| `LLM_MODEL` | `deepseek-chat` (в `.env.example`) | модель |
+| `LLM_API_KEY` | пусто | ключ OpenAI-совместимого API (удобнее ввести в `python run.py`); пусто — работа только на правилах |
+| `LLM_BASE_URL` | пусто | адрес OpenAI-совместимого API: OpenRouter `https://openrouter.ai/api/v1`, DeepSeek `https://api.deepseek.com/v1`, Ollama `http://localhost:11434/v1` |
+| `LLM_MODEL` | пусто | имя модели у выбранного сервиса |
 | `LLM_TIMEOUT` | `30` | таймаут запроса к LLM, сек; при ошибке агент тихо откатывается на правила |
 | `DB_PATH` | `/data/agent.db` в Docker, `./data/agent.db` без Docker | путь к SQLite |
 | `TELEGRAM_BOT_TOKEN` | пусто | если задан — тот же агент работает в Telegram (long polling) |

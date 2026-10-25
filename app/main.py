@@ -45,7 +45,7 @@ STATIC = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     store.conn()
-    log.info("Trip agent started. LLM: %s", "on (" + os.getenv("LLM_MODEL", "gpt-4o-mini") + ")" if llm.enabled() else "off (rules only)")
+    log.info("Trip agent started. LLM: %s", f"on ({llm.model_name()})" if llm.enabled() else "off (rules only)")
     if os.getenv("TELEGRAM_BOT_TOKEN"):
         from .telegram_bot import start_in_background
         start_in_background()
@@ -99,7 +99,7 @@ def health():
 
 @app.get("/api/config")
 def config():
-    return {"llm": llm.enabled(), "model": os.getenv("LLM_MODEL", "gpt-4o-mini") if llm.enabled() else None,
+    return {"llm": llm.enabled(), "model": llm.model_name(),
             "mock_data": True}
 
 

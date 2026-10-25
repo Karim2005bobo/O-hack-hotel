@@ -2,6 +2,8 @@
 import json
 import re
 
+from conftest import llm_env
+
 from app import agent, llm, store
 from app.data.destinations import DEST_BY_ID
 from app.state import SessionState
@@ -30,7 +32,7 @@ CARDS = {
 
 
 def fake_llm(monkeypatch, extract):
-    monkeypatch.setenv("LLM_API_KEY", "test")
+    llm_env(monkeypatch)
 
     def chat(messages, **_):
         text = messages[-1]["content"]

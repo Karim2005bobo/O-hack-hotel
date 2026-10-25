@@ -30,12 +30,18 @@ PREFS = ["sea", "warm", "mild", "culture", "food", "party", "quiet", "romantic",
 
 
 def enabled() -> bool:
-    return bool(os.getenv("LLM_API_KEY")) and os.getenv("LLM_ENABLED", "true").lower() not in ("0", "false", "no")
+    """LLM включена, только если при запуске заданы ключ, адрес API и модель (в коде их нет)."""
+    return all(os.getenv(k) for k in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL")) and \
+        os.getenv("LLM_ENABLED", "true").lower() not in ("0", "false", "no")
+
+
+def model_name() -> str | None:
+    return os.getenv("LLM_MODEL") if enabled() else None
 
 
 def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -> str | None:
-    base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    base = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    model = os.getenv("LLM_MODEL", "")
     timeout = float(os.getenv("LLM_TIMEOUT", "20"))
     body = {"model": model, "messages": messages, "temperature": 0, "max_tokens": max_tokens}
     if json_mode:
