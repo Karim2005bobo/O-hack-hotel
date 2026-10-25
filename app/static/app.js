@@ -383,7 +383,6 @@
     const set = (name, v) => { const el = form.elements[name]; if (el && document.activeElement !== el) el.value = v ?? ""; };
     set("origin", f.origin); set("destination", f.destination);
     set("date_from", f.date_from); set("date_to", f.date_to);
-    set("month", f.date_from ? "" : f.month); set("nights", f.date_to ? "" : f.nights);
     set("adults", f.adults); set("children", f.children);
   }
   function formSummary(v) {
@@ -391,8 +390,7 @@
     if (v.origin) bits.push(`откуда: ${v.origin}`);
     bits.push(v.destination ? v.destination : "куда — подобрать");
     if (v.date_from) bits.push(`${dm(v.date_from)}${v.date_to ? " – " + dm(v.date_to) : ""}`);
-    else if (v.month) bits.push($("#tripForm").elements.month.selectedOptions[0].textContent);
-    if (v.adults) bits.push(`${v.adults} взр.` + (v.children ? `, дети ${v.children}` : ""));
+    if (v.adults) bits.push(`${v.adults} взр.` + (+v.children ? `, детей: ${v.children}` : ""));
     return "Мои параметры: " + bits.join("; ");
   }
   function initForm() {
@@ -400,9 +398,6 @@
     form.addEventListener("input", (e) => {
       formDirty = true;
       const n = e.target.name;
-      if ((n === "date_from" || n === "date_to") && e.target.value) form.elements.month.value = "";
-      if (n === "month" && e.target.value) { form.elements.date_from.value = ""; form.elements.date_to.value = ""; }
-      if (n === "date_to" && e.target.value) form.elements.nights.value = "";
     });
     form.onsubmit = (e) => {
       e.preventDefault();

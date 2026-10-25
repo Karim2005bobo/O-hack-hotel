@@ -144,8 +144,11 @@ def test_trip_form_apply():
     store.reset_for_tests()
     s = SessionState(user_id="t-form")
     agent.handle(s, "тёплое море, всё включено, без визы, бюджет 300 000")
-    form = {"origin": "Казань", "destination": "", "month": "2", "nights": "7", "adults": "2", "children": "6"}
+    form = {"origin": "Казань", "destination": "", "date_from": "2027-02-10", "date_to": "2027-02-17", "adults": "2",
+            "children": "1"}
     out = agent.handle(s, None, {"type": "apply_form", "values": form})
+    assert s.stage == "clarify" and "лет" in out["text"]  # добавили ребёнка — агент спрашивает возраст
+    out = agent.handle(s, "6 лет")
     assert s.stage == "destinations" and s.req.origin == "KZN" and s.req.children_ages == [6] and s.req.month == 2
     # бюджет и пожелания из диалога сохраняются — в форме их нет
     assert s.req.budget == 300000 and s.req.meal == "AI" and s.req.visa_free and "sea" in s.req.prefs
@@ -154,10 +157,13 @@ def test_trip_form_apply():
     form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"destination": "Шарм-эш-Шейх"}
     agent.handle(s, None, {"type": "apply_form", "values": form})
     assert s.stage == "bundles" and s.req.destination == "sharm"
-    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"children": "6, 10"}
+    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"children": "2"}
+    agent.handle(s, None, {"type": "apply_form", "values": form})
+    out = agent.handle(s, "10 лет")
+    assert s.req.children_ages[0] == 6 and len(s.req.children_ages) == 2 and s.stage == "bundles"
+    form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"adults": "3"}
     out = agent.handle(s, None, {"type": "apply_form", "values": form})
-    assert s.req.children_ages == [6, 10] and any(b["type"] == "diff" for b in out["blocks"])
-    assert out["text"].startswith("Применил ваши параметры: состав")
+    assert any(b["type"] == "diff" for b in out["blocks"]) and out["text"].startswith("Применил ваши параметры: состав")
     # пустое «Куда» — снова подбор направлений
     form = {k: v for k, v in agent.summary(s)["form"].items() if k in form} | {"destination": ""}
     agent.handle(s, None, {"type": "apply_form", "values": form})

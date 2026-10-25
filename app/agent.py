@@ -224,6 +224,12 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     adults_assumed = upd.pop("_adults_assumed", False)
     upd.pop("_open_destination", None)
     kids_unknown = upd.pop("_kids_count_unknown", False)
+    new_ages = upd.get("children_ages")
+    if (state.awaiting == "children_ages" and r.children_ages and r.children_pending and new_ages
+            and len(new_ages) <= r.children_pending and not upd.get("children_pending")):
+        # спрашивали возраст только новых детей — дополняем, а не заменяем известных
+        upd["children_ages"] = r.children_ages + new_ages
+        upd["children_pending"] = r.children_pending - len(new_ages)
     gateway_note = upd.pop("_gateway_note", None)
     if gateway_note:
         turn.notes.append("🧭 " + gateway_note)
@@ -1784,7 +1790,7 @@ def form_values(state: SessionState) -> dict:
         "origin": ORIGIN_BY_CODE[r.origin].name if r.origin and r.origin in ORIGIN_BY_CODE else "",
         "destination": dest, "date_from": date_from, "date_to": date_to,
         "month": r.month or "", "nights": r.nights or (state.plan["nights_requested"] if state.plan else ""),
-        "adults": r.adults or "", "children": ", ".join(map(str, r.children_ages)),
+        "adults": r.adults or "", "children": (len(r.children_ages) + r.children_pending) or "",
         "budget": r.budget or "", "pets": r.pets or "", "wishes": wishes_text(r),
     }
 
@@ -1843,9 +1849,17 @@ def do_apply_form(state: SessionState, f: dict, turn: Turn) -> dict:
             r.assumptions.pop("adults", None)
         except ValueError:
             pass
-    ages = [int(a) for a in re.findall(r"\d{1,2}", text("children")) if int(a) < 18]
-    upd["children_ages"], upd["children_pending"] = ages, 0
-    r.assumptions.pop("children", None)
+    if "children" in f:  # «Детей»: число; возрасты уже известных детей сохраняем, про новых спросим
+        try:
+            n = max(0, min(10, int(text("children") or 0)))
+        except ValueError:
+            n = len(r.children_ages)
+        ages = r.children_ages[:n]
+        upd["children_ages"], upd["children_pending"] = ages, n - len(ages)
+        if n - len(ages) > 0:
+            upd["_kids_count_unknown"] = True
+        else:
+            r.assumptions.pop("children", None)
     # бюджет, питомец и пожелания — только если поля есть в форме (иначе сохраняем то, что понято из диалога)
     if "budget" in f:
         budget = re.sub(r"[^\d]", "", text("budget"))
@@ -1867,9 +1881,11 @@ def do_apply_form(state: SessionState, f: dict, turn: Turn) -> dict:
         if w.get("_unknown_place") and "destination" not in upd and "_unknown_place" not in upd and not text("destination"):
             upd["_unknown_place"] = w["_unknown_place"]
     state.pinned, state.cart = {}, None
-    for k in ("when", "children_ages", "party", "origin"):
+    for k in ("when", "party", "origin"):
         if k not in state.asked:
             state.asked.append(k)
+    if upd.get("children_pending"):  # добавили детей — спросим их возраст (влияет на цену и выбор отелей)
+        state.asked = [a for a in state.asked if a != "children_ages"]
     apply_updates(state, upd, turn)
     after = r.model_dump()
     changed = {k for k in after if after[k] != before.get(k) and k not in ("assumptions", "origin_source", "nights_source",
