@@ -117,3 +117,14 @@ def test_rule_dates_beat_llm(monkeypatch):
     s = SessionState(user_id="t-dates2")
     agent.handle(s, "Сочи с 1 по 11 июня вдвоём")
     assert (s.req.date_from, s.req.date_to) == ("2027-06-01", "2027-06-11") and s.req.nights == 10
+
+
+def test_long_trips_allowed_and_counted():
+    store.reset_for_tests()
+    s = SessionState(user_id="t-long")
+    run(s, "Сочи с 1 июня по 31 августа вдвоём")
+    assert (s.req.date_from, s.req.date_to, s.req.nights) == ("2027-06-01", "2027-08-31", 91)
+    assert s.stage == "bundles" and s.plan["nights_requested"] == 91
+    s2 = SessionState(user_id="t-long2")
+    run(s2, "Бали на 120 дней с 1 декабря вдвоём")
+    assert s2.req.nights == 120 and s2.plan["nights_requested"] == 120

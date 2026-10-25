@@ -304,9 +304,6 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     return changed
 
 
-MAX_NIGHTS = 60
-
-
 def _shift_year(d: date, years: int) -> date:
     try:
         return d.replace(year=d.year + years)
@@ -315,30 +312,26 @@ def _shift_year(d: date, years: int) -> date:
 
 
 def normalize_dates(r: TripRequest) -> str | None:
-    """Чиним даты: прошедшие — на следующий год, перепутанный год у конца поездки, слишком длинные поездки."""
+    """Чиним только явные ошибки: прошедшую дату начала (LLM ошиблась годом) и конец раньше начала.
+
+    Длинные поездки (месяц, полгода, год) допустимы — длительность считается от реальных дат.
+    """
     if not r.date_from:
         return None
     t = today()
     d1 = date.fromisoformat(r.date_from)
     d2 = date.fromisoformat(r.date_to) if r.date_to else None
     note = None
-    while d1 < t:
-        d1 = _shift_year(d1, 1)
-        if d2:
-            d2 = _shift_year(d2, 1)
-        note = "Даты уже прошли — перенёс их на следующий год"
-    if d2:
-        if (d2 - d1).days > MAX_NIGHTS:  # «1 июня 2027 — 11 июня 2028»: год у конца поездки перепутан
-            cand = d2.replace(year=d1.year) if not (d2.month == 2 and d2.day == 29) else date(d1.year, 2, 28)
-            if cand <= d1:
-                cand = _shift_year(cand, 1)
-            d2 = cand
-            note = "Исправил год в датах поездки"
+    if d1 < t:
+        while d1 < t:
+            d1 = _shift_year(d1, 1)
+        if d2 and d2 < t:  # конец тоже в прошлом — сдвигаем вместе с началом
+            while d2 <= d1:
+                d2 = _shift_year(d2, 1)
+        note = "Дата начала уже прошла — перенёс её на ближайший такой день в будущем"
+    if d2 and d2 <= d1:  # «с 28 декабря по 5 января» — конец в следующем году
         while d2 <= d1:
             d2 = _shift_year(d2, 1)
-        if (d2 - d1).days > MAX_NIGHTS:
-            d2 = d1 + timedelta(days=r.nights if r.nights and r.nights <= MAX_NIGHTS else 7)
-            note = f"Поездка получалась длиннее {MAX_NIGHTS} ночей — оставил начало и стандартную длительность"
     r.date_from, r.date_to = d1.isoformat(), (d2.isoformat() if d2 else None)
     r.month, r.year = d1.month, d1.year
     return note

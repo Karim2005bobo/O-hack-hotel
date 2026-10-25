@@ -94,24 +94,29 @@ def _next_weekday(start: date, wd: int) -> date:
 
 def parse_dates(t: str, out: dict) -> None:
     td = today()
-    # с 10 по 17 ноября / 10-17 ноября
-    m = re.search(r"(?:с\s+)?(\d{1,2})\s*(?:-|–|—|по|до)\s*(\d{1,2})\s+" + MONTH_RE, t)
+    # диапазоны: «с 10 по 17 ноября», «с 28 декабря по 5 января», «с 1 июня 2027 по 1 июня 2028 года»,
+    # «с 1 июня по 1 июня следующего года»
+    year_re = r"(?:\s+(\d{4})\s*(?:г(?:ода|од)?\.?)?)?"
+    m = re.search(r"(?<![\d.])(\d{1,2})(?:\s+" + MONTH_RE + r")?" + year_re + r"\s*(?:-|–|—|по|до)\s*"
+                  r"(\d{1,2})\s+" + MONTH_RE + year_re + r"(\s+следующ\w+\s+год\w*)?", t)
     if m:
-        mon = month_from_stem(m.group(3))
-        d1, d2 = _mkdate(int(m.group(1)), mon), _mkdate(int(m.group(2)), mon)
-        if d1 and d2:
-            if d2 <= d1:
-                d1 = _mkdate(int(m.group(1)), mon - 1 if mon > 1 else 12) or d1
-            out.update(date_from=d1.isoformat(), date_to=d2.isoformat(), month=d1.month, flexible=False)
-            return
-    # с 28 декабря по 5 января
-    m = re.search(r"(?:с\s+)?(\d{1,2})\s+" + MONTH_RE + r"\s*(?:-|–|—|по|до)\s*(\d{1,2})\s+" + MONTH_RE, t)
-    if m:
-        m1, m2 = month_from_stem(m.group(2)), month_from_stem(m.group(4))
-        d1 = _mkdate(int(m.group(1)), m1)
-        d2 = _mkdate(int(m.group(3)), m2, (d1.year + (1 if m2 < m1 else 0)) if d1 else None)
+        day1, mon1_s, y1_s, day2, mon2_s, y2_s, next_year = m.groups()
+        mon2 = month_from_stem(mon2_s)
+        mon1 = month_from_stem(mon1_s) if mon1_s else mon2
+        if not mon1_s and int(day1) > int(day2):  # «с 30 по 3 января» — начало в предыдущем месяце
+            mon1 = mon2 - 1 if mon2 > 1 else 12
+        y1 = int(y1_s) if y1_s else None
+        y2 = int(y2_s) if y2_s else None
+        if y1 is None:
+            if y2 is not None:
+                y1 = y2 if (mon1, int(day1)) < (mon2, int(day2)) else y2 - 1
+            else:
+                y1 = _year_for(mon1, int(day1))
+        if y2 is None:
+            y2 = y1 + 1 if next_year or (mon2, int(day2)) <= (mon1, int(day1)) else y1
+        d1, d2 = _mkdate(int(day1), mon1, y1), _mkdate(int(day2), mon2, y2)
         if d1 and d2 and d2 > d1:
-            out.update(date_from=d1.isoformat(), date_to=d2.isoformat(), month=d1.month, flexible=False)
+            out.update(date_from=d1.isoformat(), date_to=d2.isoformat(), month=d1.month, year=d1.year, flexible=False)
             return
     # 12.11 - 19.11 / 12.11.2026
     ds = re.findall(r"\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b", t)
@@ -165,10 +170,10 @@ def parse_dates(t: str, out: dict) -> None:
         m_ = td.month % 12 + 1
         out.update(month=m_, year=_year_for(m_))
         return
-    # одиночная дата: «с 12 ноября», «12 ноября»
-    m = re.search(r"(?:с\s+|на\s+|вылет\s+)?(\d{1,2})\s+" + MONTH_RE, t)
-    if m and not re.search(r"\d{1,2}\s+" + MONTH_RE + r"\s+(лет|год)", t):
-        d = _mkdate(int(m.group(1)), month_from_stem(m.group(2)))
+    # одиночная дата: «с 12 ноября», «12 ноября 2027»
+    m = re.search(r"(?:с\s+|на\s+|вылет\s+)?(?<![\d.])(\d{1,2})\s+" + MONTH_RE + r"(?:\s+(\d{4}))?", t)
+    if m and not re.search(r"\d{1,2}\s+" + MONTH_RE + r"\s+(лет|год)(?!а\b)", t):
+        d = _mkdate(int(m.group(1)), month_from_stem(m.group(2)), int(m.group(3)) if m.group(3) else None)
         if d:
             out.update(date_from=d.isoformat(), month=d.month, flexible=False)
             return
@@ -217,7 +222,7 @@ def parse_duration(t: str, out: dict) -> None:
     m = re.search(r"\b(\d+|" + "|".join(NUM_WORDS) + r")\s*(ноч|дней|дня|суток)", t)
     if m and not re.search(r"(позже|раньше)", t):
         n = to_num(m.group(1))
-        if n and n < 40:
+        if n and n < 400:
             out["nights"] = n if m.group(2).startswith("ноч") else (max(1, n - 1) if n <= 4 else n)
             return
     if re.search(r"полторы недел", t):

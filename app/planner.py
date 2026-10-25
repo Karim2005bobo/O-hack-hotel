@@ -47,7 +47,9 @@ def ddmm(d: date) -> str:
 
 
 def date_range_text(d1: date, d2: date) -> str:
-    if d1.month == d2.month:
+    if d1.year != d2.year and (d2 - d1).days > 60:
+        return f"{ddmm(d1)} {d1.year} – {ddmm(d2)} {d2.year}"
+    if d1.month == d2.month and d1.year == d2.year:
         return f"{d1.day}–{d2.day} {MONTH_GEN[d2.month - 1]}"
     return f"{ddmm(d1)} – {ddmm(d2)}"
 
@@ -1160,6 +1162,15 @@ def itinerary(b: dict, req: TripRequest) -> list[dict]:
     co = date.fromisoformat(stay["check_out"])
     cur = arr.date() + timedelta(days=1)
     i = 0
+    if (co - cur).days > 14:  # длинная поездка: первые дни по идеям, остальное одной строкой
+        for k in range(len(ideas)):
+            days.append({"date": cur.isoformat(), "title": "Идея на день", "items": [ideas[k]]})
+            cur += timedelta(days=1)
+        rest = (co - cur).days
+        if rest > 0:
+            days.append({"date": cur.isoformat(), "title": f"Ещё {rest} дн. — свободная программа",
+                         "items": [f"с {ddmm(cur)} по {ddmm(co - timedelta(days=1))}: отдых, поездки по окрестностям"]})
+        cur = co
     while cur < co:
         free = i % 2 == 1 and "beach" in dest.kinds
         days.append({"date": cur.isoformat(), "title": "Свободный день" if free else "Идея на день",
