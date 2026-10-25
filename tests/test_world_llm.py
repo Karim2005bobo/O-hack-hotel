@@ -39,7 +39,7 @@ def fake_llm(monkeypatch, extract):
         m = re.search(r"назвал место: «(.+?)»", text)
         if m:
             return json.dumps(CARDS[m.group(1)], ensure_ascii=False)
-        return json.dumps(extract, ensure_ascii=False)
+        return json.dumps(extract(text) if callable(extract) else extract, ensure_ascii=False)
     monkeypatch.setattr(llm, "_chat", chat)
 
 
@@ -89,3 +89,39 @@ def test_without_llm_falls_back_to_catalog(monkeypatch):
     s = SessionState(user_id="w5")
     out = agent.handle(s, "Хочу поехать в антарктиду летом вдвоём")
     assert "нет" in out["text"] and s.stage == "destinations"
+
+
+CARDS["Магнитогорск"] = {**card("Магнитогорск", "RU", 53.41, 58.98), "name_gen": "Магнитогорска", "tz": 5}
+
+
+def test_any_origin_city_via_llm(monkeypatch):
+    store.reset_for_tests()
+    fake_llm(monkeypatch, lambda text: {"_origin_place": "Магнитогорск"} if "Магнитогорск" in text else {})
+    s = SessionState(user_id="w6")
+    agent.handle(s, "Хургада в декабре на неделю вдвоём")
+    out = agent.handle(s, "меняем город вылета на Магнитогорск")
+    from app.data.geo import ORIGIN_BY_CODE
+    assert ORIGIN_BY_CODE[s.req.origin].name == "Магнитогорск"
+    b = s.plan["bundles"][0]
+    assert b["out"]["from_name"] == "Магнитогорск" and b["out"]["stops"] == 1  # прямых нет — через Москву
+    assert "из Магнитогорска" in out["text"] and not re.search(r"\b[xo]-[0-9a-f]{10}\b", out["text"])
+
+
+def test_unknown_origin_without_llm_is_honest(monkeypatch):
+    store.reset_for_tests()
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    s = SessionState(user_id="w7")
+    out = agent.handle(s, "мы из Магнитогорска, хотим в Хургаду в декабре вдвоём")
+    assert "Магнитогорска" in out["text"] and "пока не знаю" in out["text"]
+    assert s.req.origin != "MOW" or s.req.origin_source == "assumed"
+
+
+def test_llm_never_sees_codes(monkeypatch):
+    store.reset_for_tests()
+    fake_llm(monkeypatch, {"_unknown_place": "Италия", "month": 6, "adults": 2})
+    s = SessionState(user_id="w8")
+    agent.handle(s, "хочу в Италию в июне вдвоём")
+    ctx = agent.context_text(s)
+    assert "Рим" in ctx and not re.search(r"\b[xo]-[0-9a-f]{10}\b", ctx)
+    rid = s.dest_options[0]["dest_id"]
+    assert agent.hide_codes(f"выберите {rid}") == f"выберите {s.dest_options[0]['name']}"

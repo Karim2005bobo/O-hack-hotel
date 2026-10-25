@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import llm, store
 from .data import world_meta as wm
 from .data.destinations import DEST_BY_ID, DESTINATIONS, Area, Destination
+from .data.geo import ORIGIN_BY_CODE, ORIGINS, Origin
 
 log = logging.getLogger("agent.dynamic")
 
@@ -234,3 +235,59 @@ def resolve(query: str) -> dict | None:
         ids = [i for i in ex.map(place, names) if i]
     return {"kind": kind, "label": str(card.get("name") or query)[:60], "note": str(card.get("note") or "")[:300],
             "dest_ids": list(dict.fromkeys(ids))}
+
+
+# ---------------------------------------------------------------- города вылета
+
+def _gen_form(name: str) -> str:
+    """Родительный падеж для «из Х», если LLM не прислала форму."""
+    low = name.lower()
+    if low.endswith(("о", "е", "и", "у", "ю", "э")) or " " in name:
+        return name
+    if low.endswith("а"):
+        return name[:-1] + ("и" if low[-2:-1] in "гкхжчшщ" else "ы")
+    if low.endswith(("я", "ь", "й")):
+        return name[:-1] + "и" if not low.endswith("й") else name[:-1] + "я"
+    return name + "а"
+
+
+def build_origin(card: dict, code: str) -> Origin | None:
+    name = str(card.get("name") or "").strip()[:60]
+    lat, lon = _num(card.get("lat"), -90, 90, None), _num(card.get("lon"), -180, 180, None)
+    if not name or lat is None or lon is None:
+        return None
+    gen = card.get("name_gen")
+    gen = str(gen).strip()[:60] if isinstance(gen, str) and gen.strip() else _gen_form(name)
+    return Origin(code, name, gen, lat, lon, _num(card.get("tz"), -12, 14, round(lon / 15)), (),
+                  str(card.get("iata") or name)[:20])
+
+
+def _load_origin(code: str) -> Origin | None:
+    card = store.get_place("id:" + code)
+    return build_origin(card, code) if card else None
+
+
+ORIGIN_BY_CODE.loader = _load_origin  # type: ignore[attr-defined]
+
+
+def origin(query: str) -> str | None:
+    """Любой город вылета → код (свой справочник или карточка от LLM)."""
+    q = norm_key(query)
+    for o in ORIGINS:
+        if norm_key(o.name) == q or any(q.startswith(a) for a in o.aliases):
+            return o.code
+    key = "q:" + q
+    card = store.get_place(key) or llm.place_card(query)
+    if not card or card.get("kind") not in (None, "place"):
+        return None
+    for o in ORIGINS:  # LLM привела к известному городу («Питер» → Санкт-Петербург)
+        if norm_key(o.name) == norm_key(str(card.get("name") or "")):
+            return o.code
+    code = "o-" + hashlib.md5(norm_key(card.get("name") or query).encode()).hexdigest()[:10]
+    o = build_origin(card, code)
+    if o is None:
+        return None
+    store.save_place(key, card)
+    store.save_place("id:" + code, card)
+    ORIGIN_BY_CODE[code] = o
+    return code

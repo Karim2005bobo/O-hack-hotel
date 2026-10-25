@@ -285,6 +285,9 @@ def parse_party(t: str, out: dict, expect_ages: bool = False) -> None:
         ages.append(14)
     if re.search(r"школьник", t) and not ages:
         ages.append(10)
+    if ages and kids and kids > len(ages) == 1 and re.search(r"\bпо\s+\d{1,2}\s*(?:-?\s*(?:ти|ми|х))?\s*(лет|год|мес)|"
+                                                            r"оба\w*\s+\d|обоим\s+\d|близнец|двойняшк", t):
+        ages = ages * kids  # «двое детей по 7 лет», «близнецы 5 лет»
     if ages:
         if kids is None or kids == -1 or kids < len(ages):
             kids = len(ages)
@@ -395,6 +398,12 @@ def parse_budget(t: str, out: dict) -> None:
 
 # ---------------------------------------------------------------- места
 
+ORIGIN_STOP = {"них", "этих", "этого", "этой", "тех", "двух", "трех", "всех", "списка", "предложенных", "вариантов", "вариант",
+               "отеля", "дома", "отпуска", "офиса", "чего", "него", "нее", "россии", "города", "страны", "поездки", "поездка",
+               "отдыхать", "отдохнуть", "поехать", "полететь", "хотим", "хочу", "едем", "летим", "вдвоем", "втроем", "семьей",
+               "детьми", "ребенком", "собакой", "женой", "мужем", "друзьями", "москвы", "сразу", "самолета", "поезда", "аэропорта",
+               "работы", "командировки", "моря", "отпуск", "через", "ближайшего", "какого", "любого", "далеко", "неделю"}
+
 def parse_places(t: str, out: dict) -> None:
     # город вылета
     origin_spans = []
@@ -406,6 +415,23 @@ def parse_places(t: str, out: dict) -> None:
                 out["origin"] = o.code
                 origin_spans.append((m.start(), m.end()))
                 break
+    if "origin" not in out:
+        # город вылета не из справочника: «из Магнитогорска», «город вылета — Магнитогорск»
+        place = r"([а-я][а-я-]{3,}(?:\s+[а-я][а-я-]{3,})?)"
+        m = re.search(r"(?:город\w*\s+вылета|вылет\w*)\s*(?:из|на|—|-|:)?\s*" + place, t) or \
+            re.search(r"(?:стартуем|выезжаем|едем|летим|мы|я)\s+из\s+" + place, t) or \
+            re.search(r"(?:живу|живем|живём)\s+в\s+" + place, t)
+        strong = bool(m)
+        if not m:
+            m = re.search(r"(?<![а-я])из\s+" + place, t)
+        if m:
+            words = m.group(1).split()
+            if words[0] not in ORIGIN_STOP and not re.match(MONTH_RE, words[0]):
+                two = len(words) == 2 and words[1] not in ORIGIN_STOP and words[1].endswith(("а", "я", "и", "ы", "е", "о"))
+                out["_origin_place"] = " ".join(words) if two else words[0]
+                out["_origin_strong"] = strong
+                origin_spans.append((m.start(), m.end()))
+
     def in_origin(pos):
         return any(a <= pos < b for a, b in origin_spans)
     # исключения: «не в Турцию», «кроме Египта»

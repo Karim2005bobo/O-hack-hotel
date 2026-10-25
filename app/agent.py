@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from . import dynamic, llm, nlu, planner, store
 from . import inventory as inv
 from .data.destinations import DEST_BY_ID, MONTH_LOC, MONTH_NAMES
-from .data.geo import ORIGIN_BY_CODE
+from .data.geo import ORIGIN_BY_CODE, ORIGINS
 from .planner import date_range_text, ddmm, deg, hours, rub
 from .state import PREF_LABELS, PRIORITY_LABELS, SessionState, TripRequest, today
 
@@ -57,6 +57,7 @@ class Turn:
 
     def __init__(self):
         self.trace: list[dict] = []
+        self.notes: list[str] = []  # пояснения, которые нужно показать пользователю в начале ответа
         self.t0 = time.time()
 
     def think(self, text: str):
@@ -169,16 +170,19 @@ def merge_updates(rule: dict, llm_upd: dict | None) -> dict:
             continue
         else:
             out[k] = v
+    if "children_ages" in llm_upd and "children_pending" not in llm_upd:
+        out["children_pending"] = 0  # LLM назвала возрасты всех детей
     return out
 
 
 def context_text(state: SessionState) -> str:
+    """Состояние для LLM — только человеческие названия, без внутренних кодов."""
     r = state.req
     bits = []
-    if r.destination:
-        bits.append(f"направление {r.destination}")
-    if r.origin:
-        bits.append(f"вылет {r.origin}")
+    if r.destination and r.destination in DEST_BY_ID:
+        bits.append(f"направление {DEST_BY_ID[r.destination].name}")
+    if r.origin and r.origin in ORIGIN_BY_CODE:
+        bits.append(f"вылет из {ORIGIN_BY_CODE[r.origin].name_gen}")
     if r.date_from:
         bits.append(f"даты {r.date_from}..{r.date_to or ''}")
     elif r.month:
@@ -186,7 +190,7 @@ def context_text(state: SessionState) -> str:
     if r.adults:
         bits.append(f"взрослых {r.adults}, дети {r.children_ages}")
     if state.dest_options:
-        bits.append("предложены направления: " + ", ".join(f"{i + 1}) {d['dest_id']}" for i, d in enumerate(state.dest_options)))
+        bits.append("предложены направления: " + ", ".join(f"{i + 1}) {d['name']}" for i, d in enumerate(state.dest_options)))
     if state.awaiting:
         bits.append(f"агент ждёт: {state.awaiting}")
     return "; ".join(bits) or "ничего"
@@ -200,6 +204,16 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     adults_assumed = upd.pop("_adults_assumed", False)
     upd.pop("_open_destination", None)
     kids_unknown = upd.pop("_kids_count_unknown", False)
+    origin_place, origin_strong = upd.pop("_origin_place", None), upd.pop("_origin_strong", True)
+    if origin_place and "origin" not in upd:
+        code = dynamic.origin(origin_place) if llm.enabled() else None
+        if code:
+            turn.tool("llm_place_card", {"origin": origin_place}, f"город вылета: {ORIGIN_BY_CODE[code].name}")
+            upd["origin"] = code
+        elif origin_strong:
+            names = ", ".join(o.name for o in ORIGINS)
+            turn.notes.append(f"Город вылета «{origin_place.capitalize()}» я пока не знаю — умею считать вылет из: {names}. "
+                              f"Напишите ближайший из них (например, «вылет из Екатеринбурга»).")
     unknown = upd.pop("_unknown_place", None)
     if isinstance(unknown, str):
         unknown = {"name": unknown, "prefs": []}
@@ -372,6 +386,9 @@ def handle(state: SessionState, message: str | None = None, action: dict | None 
         logging.getLogger("agent").exception("turn failed")
         out = reply(f"Что-то пошло не так при обработке ({type(e).__name__}). Попробуйте переформулировать — я сохранил все условия.",
                     chips=[chip("Начать заново", action={"type": "reset"})])
+    if turn.notes and out.get("text"):
+        out["text"] = "\n".join(turn.notes) + "\n\n" + out["text"]
+    out["text"] = hide_codes(out.get("text", ""))
     state.trace = turn.trace
     out["trace"] = turn.trace
     out["elapsed_ms"] = int((time.time() - turn.t0) * 1000)
@@ -380,6 +397,20 @@ def handle(state: SessionState, message: str | None = None, action: dict | None 
         state.history.append({"role": "agent", "text": out["text"], "ts": time.time()})
     SILENT.reset(silent_token)
     return out
+
+
+def hide_codes(text: str) -> str:
+    """Подстраховка: если в текст (например, от LLM) попал служебный код места — меняем его на название."""
+    import re as _re
+
+    def repl(m):
+        code = m.group(0)
+        if code.startswith("o-"):
+            o = ORIGIN_BY_CODE.get(code)
+            return o.name if o else code
+        d = DEST_BY_ID.get(code)
+        return d.name if d else code
+    return _re.sub(r"\b[xo]-[0-9a-f]{10}\b", repl, text)
 
 
 def describe_updates(u: dict) -> str:
@@ -720,6 +751,8 @@ def understood_line(state: SessionState) -> str:
         bits.append(DEST_BY_ID[r.destination].name)
     elif r.country:
         bits.append(r.country)
+    if r.origin and r.origin_source == "user" and r.origin in ORIGIN_BY_CODE:
+        bits.append(f"вылет из {ORIGIN_BY_CODE[r.origin].name_gen}")
     if r.prefs:
         bits.append(", ".join(PREF_LABELS.get(p, p) for p in r.prefs if p in PREF_LABELS))
     if r.month:
