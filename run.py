@@ -1,6 +1,7 @@
 """Запуск трип-агента с вводом ключа LLM в терминале.
 
     python run.py            # спросит ключ, адрес API и модель, затем запустит http://localhost:8080
+    python run.py --visible  # ключ вводится видимым текстом (если вставка в скрытое поле не работает)
     python run.py --port 9000
 
 Ключ вводится скрыто и нигде не сохраняется: он живёт только в памяти запущенного
@@ -19,8 +20,29 @@ import uvicorn
 
 def ask(prompt: str, current: str | None = None) -> str:
     hint = f" [Enter — оставить {current}]" if current else ""
-    value = input(f"{prompt}{hint}: ").strip()
+    try:
+        value = input(f"{prompt}{hint}: ").strip()
+    except EOFError:
+        value = ""
     return value or (current or "")
+
+
+def read_key(visible: bool) -> str:
+    env_key = os.getenv("LLM_API_KEY", "").strip()
+    if env_key:
+        answer = input(f"Найден ключ в переменной окружения LLM_API_KEY (…{env_key[-4:]}). Использовать его? [Y/n]: ")
+        if answer.strip().lower() not in ("n", "н", "no", "нет"):
+            return env_key
+    if visible:
+        return input("Ключ API (Enter — запуск без LLM): ").strip()
+    print("Вставьте ключ и нажмите Enter. Символы не отображаются — так и задумано.")
+    print("Не вставляется? Перезапустите так: python run.py --visible")
+    try:
+        return getpass.getpass("Ключ API (Enter — запуск без LLM): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception:  # noqa: BLE001 — терминал без поддержки скрытого ввода
+        return input("Скрытый ввод недоступен. Ключ API: ").strip()
 
 
 def check(base: str, key: str, model: str) -> str | None:
@@ -47,11 +69,15 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=int(os.getenv("APP_PORT", "8080")))
     ap.add_argument("--no-check", action="store_true", help="не проверять подключение к LLM перед запуском")
+    ap.add_argument("--visible", action="store_true",
+                    help="вводить ключ видимым текстом (если в вашем терминале не работает вставка в скрытое поле)")
     args = ap.parse_args()
 
     print("=== Трип-агент ===")
     print("Подключение LLM (любой OpenAI-совместимый API: OpenRouter, DeepSeek, Ollama и т. п.).")
-    key = getpass.getpass("Ключ API (ввод скрыт; Enter — запуск без LLM): ").strip()
+    key = read_key(args.visible)
+    if key:
+        print(f"Ключ получен: {len(key)} символов, оканчивается на …{key[-4:]}")
     if key:
         base = ask("Адрес API, например https://openrouter.ai/api/v1", os.getenv("LLM_BASE_URL"))
         model = ask("Модель, например meta-llama/llama-3.3-70b-instruct:free", os.getenv("LLM_MODEL"))
