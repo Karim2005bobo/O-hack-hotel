@@ -19,12 +19,14 @@ def load_dotenv(path: Path) -> None:
     """Читаем .env при запуске без Docker (переменные окружения важнее файла)."""
     if not path.is_file():
         return
+    values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key, value = key.strip(), value.strip().strip('"').strip("'")
+        values[key.strip()] = value.strip().strip('"').strip("'")  # при повторе побеждает последняя строка
+    for key, value in values.items():
         if key and key not in os.environ:
             os.environ[key] = value
 
