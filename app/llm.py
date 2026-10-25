@@ -41,7 +41,8 @@ def model_name() -> str | None:
 
 def is_reasoning_model(model: str) -> bool:
     m = model.lower()
-    return any(x in m for x in ("gpt-oss", "deepseek-r1", "reasoner", "qwq", ":thinking", "o1", "o3", "o4-mini", "-r1"))
+    return any(x in m for x in ("gpt-oss", "deepseek-r1", "reasoner", "qwq", ":thinking", "o1", "o3", "o4-mini", "-r1",
+                                "nemotron", "gemma-4", "reasoning"))
 
 
 def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -> str | None:
