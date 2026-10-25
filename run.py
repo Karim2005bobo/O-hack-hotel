@@ -17,6 +17,8 @@ import sys
 import httpx
 import uvicorn
 
+from app import llm
+
 
 def ask(prompt: str, current: str | None = None) -> str:
     hint = f" [Enter — оставить {current}]" if current else ""
@@ -45,23 +47,27 @@ def read_key(visible: bool) -> str:
         return input("Скрытый ввод недоступен. Ключ API: ").strip()
 
 
-def check(base: str, key: str, model: str) -> str | None:
-    """Короткий пробный запрос. Возвращает текст ошибки или None, если всё работает."""
-    try:
-        r = httpx.post(f"{base.rstrip('/')}/chat/completions", timeout=40,
-                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                       json={"model": model, "messages": [{"role": "user", "content": "Ответь словом: ок"}], "max_tokens": 5})
-    except httpx.HTTPError as e:
-        return f"не удалось подключиться: {e}"
-    if r.status_code == 200:
-        return None
+def check(base: str, key: str, model_list: list[str]) -> tuple[str | None, list[str]]:
+    """Пробный запрос к каждой модели по очереди. → (первая рабочая модель или None, ошибки)."""
     hints = {401: "ключ не подходит", 402: "на балансе нет средств", 403: "доступ запрещён",
-             404: "неверный адрес API или имя модели", 429: "превышен лимит запросов, попробуйте позже"}
+             404: "неверный адрес API или имя модели", 429: "лимит запросов (часто временный у бесплатных моделей)"}
+    errors = []
     try:
-        detail = r.json().get("error", {}).get("message", "")
-    except ValueError:
-        detail = r.text[:200]
-    return f"HTTP {r.status_code}: {hints.get(r.status_code, 'ошибка сервиса')}. {detail}".strip()
+        with httpx.Client(timeout=40) as c:
+            for model in model_list:
+                r = llm.request(model, [{"role": "user", "content": "Ответь словом: ок"}], 5, False, c)
+                if r.status_code == 200:
+                    return model, errors
+                try:
+                    detail = r.json().get("error", {}).get("message", "")
+                except ValueError:
+                    detail = r.text[:200]
+                errors.append(f"{model} — HTTP {r.status_code}: {hints.get(r.status_code, 'ошибка сервиса')}. {detail}".strip())
+                if r.status_code == 401:
+                    break
+    except httpx.HTTPError as e:
+        errors.append(f"не удалось подключиться: {e}")
+    return None, errors
 
 
 def main() -> None:
@@ -80,20 +86,29 @@ def main() -> None:
         print(f"Ключ получен: {len(key)} символов, оканчивается на …{key[-4:]}")
     if key:
         base = ask("Адрес API, например https://openrouter.ai/api/v1", os.getenv("LLM_BASE_URL"))
-        model = ask("Модель, например meta-llama/llama-3.3-70b-instruct:free", os.getenv("LLM_MODEL"))
+        model = ask("Модель (можно несколько через запятую — запасные на случай лимитов)", os.getenv("LLM_MODEL"))
         if not base or not model:
             print("Не указан адрес API или модель — запускаю без LLM.")
             key = base = model = ""
         elif not args.no_check:
-            print("Проверяю подключение…", end=" ", flush=True)
-            err = check(base, key, model)
-            if err:
-                print(f"\n✕ {err}")
+            os.environ["LLM_API_KEY"], os.environ["LLM_BASE_URL"] = key, base
+            print("Проверяю подключение…", flush=True)
+            ok, errors = check(base, key, [m.strip() for m in model.split(",") if m.strip()])
+            for e in errors:
+                print(f"  ✕ {e}")
+            if ok:
+                print(f"  ✓ работает: {ok}")
+                rest = [m.strip() for m in model.split(",") if m.strip() and m.strip() != ok]
+                model = ",".join([ok, *rest])  # рабочую модель ставим первой
+            elif all("HTTP 429" in e for e in errors):
+                print("Все модели сейчас перегружены. Обычно это проходит через минуту-другую.")
+                if input("Всё равно запустить с LLM (при ошибке агент сам ответит без неё)? [Y/n]: ").strip().lower() \
+                        in ("n", "н", "no", "нет"):
+                    key = base = model = ""
+            else:
                 if input("Запустить без LLM? [Y/n]: ").strip().lower() in ("n", "н", "no", "нет"):
                     sys.exit(1)
                 key = base = model = ""
-            else:
-                print("✓ работает")
     else:
         base = model = ""
     # задаём явно (в т. ч. пустыми), чтобы значения из .env не подменили выбор в терминале

@@ -35,8 +35,13 @@ def enabled() -> bool:
         os.getenv("LLM_ENABLED", "true").lower() not in ("0", "false", "no")
 
 
+def models() -> list[str]:
+    """LLM_MODEL может содержать несколько моделей через запятую — запасные на случай лимитов."""
+    return [m.strip() for m in os.getenv("LLM_MODEL", "").split(",") if m.strip()]
+
+
 def model_name() -> str | None:
-    return os.getenv("LLM_MODEL") if enabled() else None
+    return ", ".join(models()) if enabled() else None
 
 
 def is_reasoning_model(model: str) -> bool:
@@ -45,10 +50,9 @@ def is_reasoning_model(model: str) -> bool:
                                 "nemotron", "gemma-4", "reasoning"))
 
 
-def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -> str | None:
+def request(model: str, messages: list[dict], max_tokens: int, json_mode: bool, client: httpx.Client) -> httpx.Response:
+    """Один запрос к chat/completions с учётом особенностей модели."""
     base = os.getenv("LLM_BASE_URL", "").rstrip("/")
-    model = os.getenv("LLM_MODEL", "")
-    timeout = float(os.getenv("LLM_TIMEOUT", "20"))
     reasoning = is_reasoning_model(model)
     if reasoning:
         max_tokens *= 4  # рассуждающие модели тратят часть лимита на «мысли» — даём запас
@@ -58,22 +62,31 @@ def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -
     if json_mode:
         body["response_format"] = {"type": "json_object"}
     headers = {"Authorization": f"Bearer {os.getenv('LLM_API_KEY')}", "Content-Type": "application/json"}
+    r = client.post(f"{base}/chat/completions", json=body, headers=headers)
+    if r.status_code == 400 and (json_mode or "reasoning" in body):  # сервер не знает доп. параметры
+        body.pop("response_format", None)
+        body.pop("reasoning", None)
+        r = client.post(f"{base}/chat/completions", json=body, headers=headers)
+    return r
+
+
+def _chat(messages: list[dict], max_tokens: int = 600, json_mode: bool = True) -> str | None:
+    timeout = float(os.getenv("LLM_TIMEOUT", "20"))
     try:
         with httpx.Client(timeout=timeout) as c:
-            r = c.post(f"{base}/chat/completions", json=body, headers=headers)
-            if r.status_code == 400 and (json_mode or "reasoning" in body):  # сервер не знает доп. параметры
-                body.pop("response_format", None)
-                body.pop("reasoning", None)
-                r = c.post(f"{base}/chat/completions", json=body, headers=headers)
-            r.raise_for_status()
-            content = r.json()["choices"][0]["message"].get("content") or ""
-            if not content.strip():
-                log.warning("LLM вернула пустой ответ (возможно, не хватило max_tokens)")
-                return None
-            return content
+            for model in models():
+                r = request(model, messages, max_tokens, json_mode, c)
+                if r.status_code in (402, 404, 408, 429) or r.status_code >= 500:
+                    log.warning("LLM %s: HTTP %s — пробую следующую модель", model, r.status_code)
+                    continue
+                r.raise_for_status()
+                content = r.json()["choices"][0]["message"].get("content") or ""
+                if content.strip():
+                    return content
+                log.warning("LLM %s вернула пустой ответ (возможно, не хватило max_tokens)", model)
     except Exception as e:  # noqa: BLE001 — сеть/формат: тихо откатываемся на правила
         log.warning("LLM недоступна: %s", e)
-        return None
+    return None
 
 
 def _system_prompt(today_iso: str) -> str:
