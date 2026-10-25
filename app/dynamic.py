@@ -97,6 +97,8 @@ def build_destination(card: dict, dest_id: str) -> Destination | None:
     if not name or lat is None or lon is None or air is None:
         return None
     cc = str(card.get("cc") or "").upper()[:2]
+    if cc == "AQ" or lat < -60:  # на континент Антарктида нет рейсов и отелей — только круизы (см. GATEWAYS)
+        return None
     country = wm.COUNTRY_RU.get(cc) or str(card.get("country") or "").strip()[:40] or "—"
     sea = _months12(card.get("sea"), -2, 35) if card.get("sea") else None
     rain = _months12(card.get("rain_days"), 0, 31) or tuple(8 for _ in range(12))

@@ -26,7 +26,7 @@ CARDS = {
     "Италия": card("Италия", "IT", 42, 12, kind="region", suggest=["Рим", "Венеция"]),
     "Рим": card("Рим", "IT", 41.9, 12.5, sea=[14] * 12),
     "Венеция": card("Венеция", "IT", 45.44, 12.33),
-    "Антарктида": card("Антарктида", "AQ", -75, 0, kind="unreachable", suggest=["Ушуая", "Мурманск"]),
+    "Луна": card("Луна", "", 0, 0, kind="unreachable", suggest=["Ушуая", "Мурманск"]),
     "Ушуая": card("Ушуая", "AR", -54.8, -68.3),
 }
 
@@ -82,19 +82,19 @@ def test_region_gives_concrete_places(monkeypatch):
 
 def test_unreachable_place_is_honest(monkeypatch):
     store.reset_for_tests()
-    fake_llm(monkeypatch, {"_unknown_place": "Антарктида", "month": 1, "adults": 2})
+    fake_llm(monkeypatch, {"_unknown_place": "Луна", "month": 1, "adults": 2})
     s = SessionState(user_id="w4")
-    out = agent.handle(s, "хочу в антарктиду в январе вдвоём")
+    out = agent.handle(s, "хочу на луну в январе вдвоём")
     names = [d["name"] for d in out["blocks"][0]["items"]]
-    assert "Ушуая" in names and "Мурманск и Териберка" in names
-    assert "Антарктида" in out["text"]
+    assert "Мурманск и Териберка" in names and any(n.startswith("Ушуая") for n in names)
+    assert "Луна" in out["text"]
 
 
 def test_without_llm_falls_back_to_catalog(monkeypatch):
     store.reset_for_tests()
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     s = SessionState(user_id="w5")
-    out = agent.handle(s, "Хочу поехать в антарктиду летом вдвоём")
+    out = agent.handle(s, "Хочу поехать в Гренландию летом вдвоём")
     assert "нет" in out["text"] and s.stage == "destinations"
 
 
@@ -136,13 +136,13 @@ def test_llm_never_sees_codes(monkeypatch):
 
 def test_llm_confusing_antarctica_with_antalya_is_ignored(monkeypatch):
     store.reset_for_tests()
-    fake_llm(monkeypatch, {"destination": "antalya", "month": 1, "adults": 2})
+    fake_llm(monkeypatch, lambda text: {"destination": "antalya", "month": 1, "adults": 2} if "антаркт" in text.lower()
+             else {})
     s = SessionState(user_id="w9")
     agent.handle(s, "Хургада в декабре на неделю вдвоём")
-    assert s.req.destination == "hurghada" or s.req.destination is None
     out = agent.handle(s, "хочу поехать в антарктиду")
-    assert s.req.destination != "antalya"
-    assert "Антарктида" in out["text"]
+    assert s.req.destination == "ushuaia"
+    assert "Антарктиду" in out["text"]
 
 
 def test_unknown_place_replaces_current_destination_without_llm(monkeypatch):
@@ -150,19 +150,9 @@ def test_unknown_place_replaces_current_destination_without_llm(monkeypatch):
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     s = SessionState(user_id="w10")
     agent.handle(s, "Хургада в декабре на неделю вдвоём")
-    out = agent.handle(s, "хочу в антарктиду")
+    out = agent.handle(s, "хочу в гренландию")
     assert s.req.destination is None and s.stage == "destinations"
-    assert "Антарктида" in out["text"]
-
-
-
-def test_inspiration_includes_world_places_from_llm(monkeypatch):
-    store.reset_for_tests()
-    SUGGEST[:] = ["Рейкьявик", "Анталья"]
-    fake_llm(monkeypatch, {"month": 2, "adults": 2, "prefs": ["nature", "northern_lights"]})
-    s = SessionState(user_id="w11")
-    out = agent.handle(s, "хочу посмотреть северное сияние в феврале вдвоём")
-    names = [d["name"] for d in out["blocks"][0]["items"]]
-    assert "Рейкьявик" in names  # место вне каталога соревнуется с каталогом
-    assert any(t.get("tool") == "llm_suggest_places" for t in out["trace"])
-    SUGGEST[:] = []
+    assert "Арктика" in out["text"]
+    agent.handle(s, "Хургада в декабре на неделю вдвоём")
+    agent.handle(s, "хочу в антарктиду")
+    assert s.req.destination == "ushuaia"

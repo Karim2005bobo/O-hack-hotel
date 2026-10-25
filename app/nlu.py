@@ -9,7 +9,7 @@ import re
 from calendar import monthrange
 from datetime import date, timedelta
 
-from .data.destinations import COUNTRY_ALIASES, DESTINATIONS, UNKNOWN_PLACES
+from .data.destinations import COUNTRY_ALIASES, DESTINATIONS, GATEWAYS, UNKNOWN_PLACES
 from .data.geo import ORIGINS
 from .state import today
 
@@ -474,6 +474,13 @@ def parse_places(t: str, out: dict) -> None:
             out["destination"] = dests[0]
         else:
             out["country"] = c
+    if "destination" not in out:
+        for pat, dest_id, note in GATEWAYS:
+            m = re.search(r"(?<![а-я])(?:" + pat + ")", t)
+            if m and not in_origin(m.start()):
+                out["destination"], out["_gateway_note"] = dest_id, note
+                out.pop("country", None)
+                break
     if "destination" not in out and "country" not in out:
         for pat, name, prefs, similar in UNKNOWN_PLACES:
             m = re.search(r"(?<![а-я])(?:" + pat + ")", t)

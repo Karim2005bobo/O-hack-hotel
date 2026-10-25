@@ -68,10 +68,20 @@ def test_dog_on_banned_destination_replans():
 def test_unknown_place_is_honest_and_similar():
     store.reset_for_tests()
     s = SessionState(user_id="t-ant")
-    out = run(s, "Хочу поехать в антарктиду летом с детьми", "5 и 9")
-    assert "нет" in out["text"] and "Антарктида" in out["text"]
+    out = run(s, "Хочу поехать в Гренландию летом с детьми", "5 и 9")
+    assert "нет" in out["text"] and "Арктика" in out["text"]
     ids = [d["dest_id"] for d in out["blocks"][0]["items"]]
     assert ids[0] in ("kamchatka", "murmansk", "baikal", "altai") and "sochi" not in ids[:3]
+
+
+def test_antarctica_goes_through_ushuaia():
+    store.reset_for_tests()
+    s = SessionState(user_id="t-ant2")
+    out = run(s, "хочу в антарктиду в январе вдвоём")
+    assert s.req.destination == "ushuaia" and s.stage == "bundles"
+    assert "Антарктиду" in out["text"] and "Ушуаи" in out["text"]
+    out = run(s, "а если в июле?")
+    assert "не ходят" in out["text"]
 
 
 def test_silent_priority_switch_has_no_chat_message():

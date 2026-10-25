@@ -224,6 +224,10 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
     adults_assumed = upd.pop("_adults_assumed", False)
     upd.pop("_open_destination", None)
     kids_unknown = upd.pop("_kids_count_unknown", False)
+    gateway_note = upd.pop("_gateway_note", None)
+    if gateway_note:
+        turn.notes.append("🧭 " + gateway_note)
+        upd.pop("_unknown_place", None)  # место известно через «ворота», искать его в LLM не нужно
     origin_place, origin_strong = upd.pop("_origin_place", None), upd.pop("_origin_strong", True)
     if origin_place and "origin" not in upd:
         code = dynamic.origin(origin_place) if llm.enabled() else None
