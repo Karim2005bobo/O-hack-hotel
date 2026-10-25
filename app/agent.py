@@ -406,6 +406,7 @@ def action_to_updates(action: dict) -> dict:
         "add_transfer": lambda a: {"_intent": "add_transfer"},
         "booking_transfer": lambda a: {"_intent": "booking_transfer", "_args": a},
         "back_to_plan": lambda a: {"_intent": "back_to_plan"},
+        "apply_form": lambda a: {"_intent": "apply_form", "_form": a.get("values") or {}},
         "info": lambda a: {"_intent": "info"},
     }
     fn = mapping.get(t)
@@ -501,6 +502,8 @@ def describe_updates(u: dict) -> str:
 
 def route(state: SessionState, upd: dict, intent: str | None, message: str | None, turn: Turn) -> dict:
     # --- сброс
+    if intent == "apply_form":
+        return do_apply_form(state, upd.get("_form", {}), turn)
     if intent == "reset":
         keep_user = state.user_id
         fresh = SessionState(id=state.id, user_id=keep_user, history=state.history, booking_ids=state.booking_ids,
@@ -1731,6 +1734,161 @@ def cancel_quote(bk: dict) -> dict:
 
 # ====================================================================== сводка для UI
 
+# ====================================================================== форма «Что я понял»
+
+WISH_KEYS = ("prefs", "meal", "free_cancel", "direct_only", "max_flight_h", "transport", "stars_min", "beach_close",
+             "center_close", "visa_free", "flight_time_pref", "accessible")
+
+
+def wishes_text(r: TripRequest) -> str:
+    """Пожелания словами — так, чтобы их же понял разбор при «Применить»."""
+    bits = [PREF_LABELS[p] for p in r.prefs if p in PREF_LABELS]
+    if r.max_flight_h:
+        bits.append(f"в пути не больше {r.max_flight_h:g} ч")
+    if r.direct_only:
+        bits.append("без пересадок")
+    if r.transport == "train":
+        bits.append("поездом")
+    if r.meal:
+        bits.append(inv.MEAL_NAMES[r.meal])
+    if r.free_cancel:
+        bits.append("бесплатная отмена")
+    if r.stars_min:
+        bits.append(f"от {r.stars_min} звёзд")
+    if r.visa_free:
+        bits.append("без визы")
+    if r.beach_close:
+        bits.append("первая линия")
+    if r.center_close:
+        bits.append("в центре")
+    if r.flight_time_pref:
+        bits.append({"morning": "утренний вылет", "day": "дневной вылет", "evening": "вечерний вылет"}[r.flight_time_pref])
+    if r.budget_level == "low" and not r.budget:
+        bits.append("недорого")
+    if r.accessible:
+        bits.append("доступная среда")
+    return ", ".join(bits)
+
+
+def form_values(state: SessionState) -> dict:
+    r = state.req
+    dest = ""
+    if r.destination and r.destination in DEST_BY_ID:
+        dest = DEST_BY_ID[r.destination].name
+    elif r.country:
+        dest = r.country
+    date_from, date_to = r.date_from or "", r.date_to or ""
+    if state.plan and not date_from:
+        date_from, date_to = state.plan["date_from"], state.plan["date_to"]
+    return {
+        "origin": ORIGIN_BY_CODE[r.origin].name if r.origin and r.origin in ORIGIN_BY_CODE else "",
+        "destination": dest, "date_from": date_from, "date_to": date_to,
+        "month": r.month or "", "nights": r.nights or (state.plan["nights_requested"] if state.plan else ""),
+        "adults": r.adults or "", "children": ", ".join(map(str, r.children_ages)),
+        "budget": r.budget or "", "pets": r.pets or "", "wishes": wishes_text(r),
+    }
+
+
+def do_apply_form(state: SessionState, f: dict, turn: Turn) -> dict:
+    """Пользователь сам заполнил параметры поездки в панели — пересчитываем подборку под них."""
+    r = state.req
+    old_dest, old_plan = r.destination, state.plan
+    before = r.model_dump()
+    turn.think("Пользователь задал параметры в форме — применяю их целиком и подбираю заново")
+    upd: dict = {}
+
+    def text(k):
+        return str(f.get(k) or "").strip()
+
+    # откуда
+    if text("origin"):
+        p = nlu.parse("вылет из " + text("origin"))
+        if p.get("origin"):
+            upd["origin"] = p["origin"]
+        else:
+            upd["_origin_place"], upd["_origin_strong"] = text("origin"), True
+    # куда: пусто — подобрать за пользователя
+    r.destination, r.country, r.candidates, r.similar_to, r.similar_label = None, None, [], [], None
+    state.unknown_place = None
+    if text("destination"):
+        p = nlu.parse("хочу в " + text("destination"))
+        for k in ("destination", "country", "_unknown_place", "_gateway_note"):
+            if k in p:
+                upd[k] = p[k]
+        if not any(k in p for k in ("destination", "country", "_unknown_place")):
+            upd["_unknown_place"] = {"name": text("destination"), "prefs": [], "query": text("destination")}
+    # когда
+    r.date_from = r.date_to = None
+    r.assumptions.pop("when", None)
+    if text("date_from"):
+        upd["date_from"] = text("date_from")
+        if text("date_to"):
+            upd["date_to"] = text("date_to")
+        upd["flexible"] = False
+    elif text("month"):
+        try:
+            m = int(text("month"))
+            upd["month"], upd["year"] = m, nlu._year_for(m, 28)
+        except ValueError:
+            pass
+    if text("nights") and not text("date_to"):
+        try:
+            upd["nights"] = max(1, int(text("nights")))
+        except ValueError:
+            pass
+    # кто едет
+    if text("adults"):
+        try:
+            upd["adults"] = max(1, min(12, int(text("adults"))))
+            r.assumptions.pop("adults", None)
+        except ValueError:
+            pass
+    ages = [int(a) for a in re.findall(r"\d{1,2}", text("children")) if int(a) < 18]
+    upd["children_ages"], upd["children_pending"] = ages, 0
+    r.assumptions.pop("children", None)
+    # бюджет и питомец
+    budget = re.sub(r"[^\d]", "", text("budget"))
+    r.budget = int(budget) if budget else None
+    r.pets = text("pets") or None
+    # пожелания — заменяют прежние
+    for k, v in TripRequest().model_dump().items():
+        if k in WISH_KEYS:
+            setattr(r, k, v)
+    r.budget_level = None
+    if text("wishes"):
+        w = nlu.parse(text("wishes"))
+        if llm.enabled():
+            w = merge_updates(w, llm.extract(text("wishes"), state.stage, context_text(state), today().isoformat()), text("wishes"))
+        for k in WISH_KEYS + ("budget_level",):
+            if k in w:
+                upd[k] = w[k]
+        if w.get("_unknown_place") and "destination" not in upd and "_unknown_place" not in upd and not text("destination"):
+            upd["_unknown_place"] = w["_unknown_place"]
+    state.pinned, state.cart = {}, None
+    for k in ("when", "children_ages", "party", "origin"):
+        if k not in state.asked:
+            state.asked.append(k)
+    apply_updates(state, upd, turn)
+    after = r.model_dump()
+    changed = {k for k in after if after[k] != before.get(k) and k not in ("assumptions", "origin_source", "nights_source",
+                                                                          "year", "flexible", "candidates", "similar_to",
+                                                                          "similar_label")}
+    if state.plan and old_plan and r.date_from == old_plan["date_from"] and r.date_to == old_plan["date_to"]:
+        changed -= {"date_from", "date_to", "month", "nights"}
+    if state.stage in ("booked",):
+        state.stage = "start"
+    missing = missing_slots(state)
+    if missing:
+        return ask(state, missing, turn)
+    fill_defaults(state, turn)
+    if r.destination:
+        same = old_plan is not None and old_dest == r.destination
+        state.plan = old_plan if same else None
+        return do_plan(state, turn, replan=same, reason="Применил ваши параметры" + (": " + describe_changes(changed, r) if same and describe_changes(changed, r) else "") + ".")
+    state.plan = None
+    return do_destinations(state, turn, reason="Применил ваши параметры — вот что подходит.")
+
+
 def summary(state: SessionState) -> dict:
     r = state.req
     slots = []
@@ -1796,4 +1954,4 @@ def summary(state: SessionState) -> dict:
         b = state.cart["bundle"]
         cart = {"title": f"{DEST_BY_ID[b['dest_id']].name}: {b['hotel']['name']}", "total": b["total"]}
     return {"slots": slots, "priority": r.priority, "stage": state.stage, "cart": cart, "memory": state.memory_applied,
-            "assumptions": r.assumptions, "booking_ids": state.booking_ids}
+            "assumptions": r.assumptions, "booking_ids": state.booking_ids, "form": form_values(state)}

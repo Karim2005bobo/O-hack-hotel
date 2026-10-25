@@ -375,19 +375,49 @@
   }
 
   // ------------------------------------------------------------------ панель
-  const EDIT_HINTS = { origin: "Вылет из ", destination: "Хочу в ", country: "Хочу в ", dates: "Даты: ", nights: "На ", party: "Едем: ",
-    budget: "Бюджет до ", budget_level: "Бюджет до ", pets: "Без питомца" };
+  // ------------------------------------------------------------------ форма «Что я понял»
+  let formDirty = false;
+  const fmtBudget = (v) => (v ? String(v).replace(/\D/g, "").replace(/\B(?=(\d{3})+(?!\d))/g, " ") : "");
+  function fillForm(f) {
+    if (!f || formDirty) return;
+    const form = $("#tripForm");
+    const set = (name, v) => { const el = form.elements[name]; if (el && document.activeElement !== el) el.value = v ?? ""; };
+    set("origin", f.origin); set("destination", f.destination);
+    set("date_from", f.date_from); set("date_to", f.date_to);
+    set("month", f.date_from ? "" : f.month); set("nights", f.date_to ? "" : f.nights);
+    set("adults", f.adults); set("children", f.children); set("budget", fmtBudget(f.budget));
+    set("pets", f.pets); set("wishes", f.wishes);
+  }
+  function formSummary(v) {
+    const bits = [];
+    if (v.origin) bits.push(`откуда: ${v.origin}`);
+    bits.push(v.destination ? v.destination : "куда — подобрать");
+    if (v.date_from) bits.push(`${dm(v.date_from)}${v.date_to ? " – " + dm(v.date_to) : ""}`);
+    else if (v.month) bits.push($("#tripForm").elements.month.selectedOptions[0].textContent);
+    if (v.adults) bits.push(`${v.adults} взр.` + (v.children ? `, дети ${v.children}` : ""));
+    if (v.budget) bits.push(`до ${fmtBudget(v.budget)} ₽`);
+    if (v.wishes) bits.push(v.wishes);
+    return "Мои параметры: " + bits.join("; ");
+  }
+  function initForm() {
+    const form = $("#tripForm");
+    form.addEventListener("input", (e) => {
+      formDirty = true;
+      const n = e.target.name;
+      if ((n === "date_from" || n === "date_to") && e.target.value) form.elements.month.value = "";
+      if (n === "month" && e.target.value) { form.elements.date_from.value = ""; form.elements.date_to.value = ""; }
+      if (n === "date_to" && e.target.value) form.elements.nights.value = "";
+    });
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const values = Object.fromEntries(new FormData(form).entries());
+      formDirty = false;
+      closePanel();
+      send(null, { type: "apply_form", values }, formSummary(values));
+    };
+  }
   function renderSummary(s) {
-    const box = $("#slots");
-    if (!s.slots.length) { box.innerHTML = `<div class="muted">Пока ничего — расскажите о поездке.</div>`; }
-    else {
-      box.innerHTML = "";
-      s.slots.forEach((sl) => {
-        const row = h(`<div class="slot ${sl.editable ? "editable" : ""}"><span class="slot-label">${esc(sl.label)}</span><span class="slot-value">${esc(sl.value)}</span></div>`);
-        if (sl.editable) row.onclick = () => { const inp = $("#input"); inp.value = EDIT_HINTS[sl.key] || ""; inp.focus(); closePanel(); };
-        box.appendChild(row);
-      });
-    }
+    fillForm(s.form);
     document.querySelectorAll("#priority button").forEach((b) => b.classList.toggle("on", b.dataset.p === s.priority));
     const cc = $("#cartCard");
     if (s.cart) { cc.hidden = false; $("#cartMini").innerHTML = `<div>${esc(s.cart.title)}</div><div class="price">${rub(s.cart.total)}</div>`; }
@@ -480,6 +510,7 @@
     });
     document.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => { closePanel(); ({ trips: openTrips, memory: openMemory, metrics: openMetrics })[b.dataset.open](); });
     $("#modalClose").onclick = closeModal;
+    initForm();
     $("#modal").onclick = (e) => { if (e.target.id === "modal") closeModal(); };
     $("#panelToggle").onclick = () => $("#panel").classList.toggle("open");
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); closePanel(); } });

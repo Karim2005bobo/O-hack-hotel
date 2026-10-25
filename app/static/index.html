@@ -41,8 +41,29 @@
       <button class="ghost" data-open="metrics">Метрики</button>
     </div>
     <div class="panel-card">
-      <div class="panel-title">Что я понял <span class="hint">нажмите, чтобы поправить</span></div>
-      <div id="slots" class="slots"><div class="muted">Пока ничего — расскажите о поездке.</div></div>
+      <div class="panel-title">Что я понял <span class="hint">поправьте и нажмите «Применить»</span></div>
+      <form id="tripForm" class="trip-form" autocomplete="off">
+        <label>Откуда<input name="origin" placeholder="Москва"></label>
+        <label>Куда<input name="destination" placeholder="подобрать за меня"></label>
+        <div class="row2">
+          <label>С<input type="date" name="date_from"></label>
+          <label>По<input type="date" name="date_to"></label>
+        </div>
+        <div class="row2">
+          <label>или месяц<select name="month"><option value="">—</option><option value="1">январь</option><option value="2">февраль</option><option value="3">март</option><option value="4">апрель</option><option value="5">май</option><option value="6">июнь</option><option value="7">июль</option><option value="8">август</option><option value="9">сентябрь</option><option value="10">октябрь</option><option value="11">ноябрь</option><option value="12">декабрь</option></select></label>
+          <label>Ночей<input type="number" name="nights" min="1" max="400" placeholder="7"></label>
+        </div>
+        <div class="row2">
+          <label>Взрослых<input type="number" name="adults" min="1" max="12" placeholder="2"></label>
+          <label>Возраст детей<input name="children" placeholder="напр. 5, 9"></label>
+        </div>
+        <div class="row2">
+          <label>Бюджет, ₽<input name="budget" inputmode="numeric" placeholder="любой"></label>
+          <label>Питомец<select name="pets"><option value="">нет</option><option value="dog">собака</option><option value="cat">кошка</option><option value="pet">другой</option></select></label>
+        </div>
+        <label>Пожелания<textarea name="wishes" rows="2" placeholder="море, без пересадок, всё включено"></textarea></label>
+        <button class="primary" type="submit">Применить</button>
+      </form>
     </div>
     <div class="panel-card">
       <div class="panel-title">Что важнее</div>

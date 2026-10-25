@@ -504,6 +504,8 @@ def parse_prefs(t: str, out: dict) -> None:
     if "warm" in prefs and re.search(r"не\s+(люблю|хочу|переношу)\s+жар|без жары|не\s+жарк|не в жару|жару не", t):
         prefs.remove("warm")
         prefs.append("mild")
+    if "mild" not in prefs and re.search(r"без жары|не жарко|нежарк|не в жару", t):
+        prefs = [p for p in prefs if p != "warm"] + ["mild"]
     if re.search(r"не\s+(люблю|хочу)\s+(тус|шум|толп)", t):
         prefs = [p for p in prefs if p != "party"] + ["quiet"]
     if "sea" in prefs and re.search(r"\bморе не\b|без моря|не (на )?море", t):
