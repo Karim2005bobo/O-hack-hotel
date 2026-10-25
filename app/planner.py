@@ -546,7 +546,6 @@ def rank_destinations(req: TripRequest, visited: list[str] | None = None, limit:
             s -= 0.25
         if extra and d.id in extra and d.source == "llm":
             s += 0.5
-            why.append("предложил ИИ под ваш запрос")
         if d.id in req.similar_to:
             s += 2.2 - 0.2 * req.similar_to.index(d.id)
             why.insert(0, f"ближе всего к «{req.similar_label}»" if req.similar_label else "похоже на то, что вы искали")
