@@ -87,3 +87,33 @@ def test_silent_priority_switch_has_no_chat_message():
     s2 = SessionState(user_id="t-sil2")
     out = agent.handle(s2, None, {"type": "set", "key": "priority", "value": "comfort", "silent": True})
     assert out["text"] == "" and s2.req.priority == "comfort" and s2.stage == "start"
+
+
+def test_bad_years_from_llm_are_fixed(monkeypatch):
+    import json
+
+    from conftest import llm_env
+
+    from app import llm
+    store.reset_for_tests()
+    llm_env(monkeypatch)
+    # модель перепутала годы: начало в прошлом, конец через год
+    monkeypatch.setattr(llm, "_chat", lambda *a, **k: json.dumps({"date_from": "2026-06-01", "date_to": "2027-06-11", "adults": 2}))
+    s = SessionState(user_id="t-dates")
+    out = agent.handle(s, "Сочи летом на десять дней, вдвоём")
+    assert (s.req.date_from, s.req.date_to) == ("2027-06-01", "2027-06-11")
+    assert "374" not in out["text"]
+
+
+def test_rule_dates_beat_llm(monkeypatch):
+    import json
+
+    from conftest import llm_env
+
+    from app import llm
+    store.reset_for_tests()
+    llm_env(monkeypatch)
+    monkeypatch.setattr(llm, "_chat", lambda *a, **k: json.dumps({"date_from": "2026-06-01", "date_to": "2026-06-11"}))
+    s = SessionState(user_id="t-dates2")
+    agent.handle(s, "Сочи с 1 по 11 июня вдвоём")
+    assert (s.req.date_from, s.req.date_to) == ("2027-06-01", "2027-06-11") and s.req.nights == 10

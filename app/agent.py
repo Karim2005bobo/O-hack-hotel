@@ -163,7 +163,10 @@ def merge_updates(rule: dict, llm_upd: dict | None) -> dict:
     if not llm_upd:
         return rule
     out = dict(rule)
+    rule_dates = any(k in rule for k in ("date_from", "date_to"))
     for k, v in llm_upd.items():
+        if rule_dates and k in ("date_from", "date_to", "month", "year", "nights"):
+            continue  # явные даты правила разбирают детерминированно — LLM их не перебивает
         if k in ("prefs", "avoid"):
             out[k] = sorted(set(out.get(k, [])) | set(v))
         elif k == "_intent" and rule.get("_intent") in ("choose_book", "shift_dates", "extend") and v != rule.get("_intent"):
@@ -288,6 +291,10 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
         r.nights_source = "user"
         if r.date_from and "date_to" not in upd:
             r.date_to = (date.fromisoformat(r.date_from) + timedelta(days=r.nights)).isoformat()
+    if "date_from" in upd or "date_to" in upd:
+        fix = normalize_dates(r)
+        if fix:
+            turn.think(fix)
     if r.date_from and r.date_to and ("date_from" in upd or "date_to" in upd):
         r.nights = (date.fromisoformat(r.date_to) - date.fromisoformat(r.date_from)).days
     new = r.model_dump()
@@ -295,6 +302,46 @@ def apply_updates(state: SessionState, upd: dict, turn: Turn) -> set[str]:
         if new[k] != old.get(k) and k not in ("assumptions", "origin_source", "nights_source", "year", "flexible"):
             changed.add(k)
     return changed
+
+
+MAX_NIGHTS = 60
+
+
+def _shift_year(d: date, years: int) -> date:
+    try:
+        return d.replace(year=d.year + years)
+    except ValueError:  # 29 февраля
+        return d.replace(year=d.year + years, day=28)
+
+
+def normalize_dates(r: TripRequest) -> str | None:
+    """Чиним даты: прошедшие — на следующий год, перепутанный год у конца поездки, слишком длинные поездки."""
+    if not r.date_from:
+        return None
+    t = today()
+    d1 = date.fromisoformat(r.date_from)
+    d2 = date.fromisoformat(r.date_to) if r.date_to else None
+    note = None
+    while d1 < t:
+        d1 = _shift_year(d1, 1)
+        if d2:
+            d2 = _shift_year(d2, 1)
+        note = "Даты уже прошли — перенёс их на следующий год"
+    if d2:
+        if (d2 - d1).days > MAX_NIGHTS:  # «1 июня 2027 — 11 июня 2028»: год у конца поездки перепутан
+            cand = d2.replace(year=d1.year) if not (d2.month == 2 and d2.day == 29) else date(d1.year, 2, 28)
+            if cand <= d1:
+                cand = _shift_year(cand, 1)
+            d2 = cand
+            note = "Исправил год в датах поездки"
+        while d2 <= d1:
+            d2 = _shift_year(d2, 1)
+        if (d2 - d1).days > MAX_NIGHTS:
+            d2 = d1 + timedelta(days=r.nights if r.nights and r.nights <= MAX_NIGHTS else 7)
+            note = f"Поездка получалась длиннее {MAX_NIGHTS} ночей — оставил начало и стандартную длительность"
+    r.date_from, r.date_to = d1.isoformat(), (d2.isoformat() if d2 else None)
+    r.month, r.year = d1.month, d1.year
+    return note
 
 
 def action_to_updates(action: dict) -> dict:
@@ -614,7 +661,7 @@ def describe_changes(changed: set[str], r: TripRequest) -> str:
     if changed & {"date_from", "date_to", "month"}:
         bits.append("новые даты")
     if "nights" in changed and r.nights:
-        bits.append(f"{r.nights} ноч.")
+        bits.append(f"{r.nights} {plural(r.nights, 'ночь', 'ночи', 'ночей')}")
     if changed & {"adults", "children_ages", "children_pending"}:
         bits.append(f"состав — {r.adults or 2} взрослых" + (" и дети " + ", ".join(map(str, r.children_ages)) + " лет" if r.children_ages else ""))
     if "pets" in changed:
