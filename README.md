@@ -19,7 +19,7 @@ docker compose up --build
 
 Сборка занимает ~1–2 минуты (образ ~210 МБ). Никаких ручных доустановок, внешних API и ключей не нужно: без LLM-ключа агент полностью работает на встроенном разборе русского языка. С ключом (любой OpenAI-совместимый API) понимание свободного текста становится ещё устойчивее.
 
-Без Docker (для разработки): `pip install -r requirements-dev.txt && uvicorn app.main:app --port 8080`.
+Без Docker: `pip install -r requirements.txt`, затем `python -m uvicorn app.main:app --port 8080`. Файл `.env` из корня проекта подхватывается и в этом режиме.
 
 ## Зависимости и переменные окружения
 
@@ -36,7 +36,7 @@ docker compose up --build
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` (в `.env.example`) | любой совместимый endpoint: DeepSeek, OpenAI, vLLM, Ollama `http://host.docker.internal:11434/v1`, шлюзы к YandexGPT/GigaChat |
 | `LLM_MODEL` | `deepseek-chat` (в `.env.example`) | модель |
 | `LLM_TIMEOUT` | `30` | таймаут запроса к LLM, сек; при ошибке агент тихо откатывается на правила |
-| `DB_PATH` | `/data/agent.db` | путь к SQLite |
+| `DB_PATH` | `/data/agent.db` в Docker, `./data/agent.db` без Docker | путь к SQLite |
 | `TELEGRAM_BOT_TOKEN` | пусто | если задан — тот же агент работает в Telegram (long polling) |
 | `APP_TODAY` | пусто | зафиксировать «сегодня» (YYYY-MM-DD) для воспроизводимого демо |
 | `LOG_LEVEL` | `INFO` | уровень логов (всё пишется в stdout: `docker compose logs app`) |

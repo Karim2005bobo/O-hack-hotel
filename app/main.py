@@ -14,8 +14,25 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, llm, metrics, store
-from .state import SessionState
+
+def load_dotenv(path: Path) -> None:
+    """Читаем .env при запуске без Docker (переменные окружения важнее файла)."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+from . import agent, llm, metrics, store  # noqa: E402 — после чтения .env
+from .state import SessionState  # noqa: E402
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("app")
